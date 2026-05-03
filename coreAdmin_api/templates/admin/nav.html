@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %} — Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 id="page-title">Dashboard</h1>
+</div>
+<div class="card">
+  <p style="color:#586069;font-size:.875rem">
+    Select a model from the sidebar to manage records.
+  </p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+if (!AdminUI.Auth.isLoggedIn()) AdminUI.Auth.redirectToLogin();
+AdminUI.initNav(null);
+</script>
+{% endblock %}

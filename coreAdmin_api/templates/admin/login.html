@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>coreAdmin — Login</title>
+  <link rel="stylesheet" href="{{ ui_base }}/static/admin.css">
+</head>
+<body>
+<a href="#login-form" class="skip-link" style="position:absolute;left:-9999px;top:0;z-index:9999;padding:.5rem 1rem;background:#0052cc;color:#fff;text-decoration:none">Skip to login form</a>
+<div class="login-wrap">
+  <div class="login-box">
+    <h1>coreAdmin</h1>
+    <div id="alert" class="alert" role="alert" aria-live="assertive"></div>
+    <form id="login-form" novalidate aria-label="Login form">
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email" required autofocus autocomplete="email" aria-required="true">
+      </div>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" required autocomplete="current-password" aria-required="true">
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%">Sign in</button>
+    </form>
+  </div>
+</div>
+<script>window.ADMIN_UI_BASE = '{{ ui_base }}';</script>
+<script src="{{ ui_base }}/static/admin.js"></script>
+<script>
+(function () {
+  if (AdminUI.Auth.isLoggedIn()) {
+    window.location.href = window.ADMIN_UI_BASE + '/dashboard';
+    return;
+  }
+  document.getElementById('login-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const alertEl = document.getElementById('alert');
+    alertEl.style.display = 'none';
+    const email = document.getElementById('email').value;
+    const password = document.getElementById('password').value;
+    try {
+      const resp = await fetch('/api/v1/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail || 'Login failed');
+      }
+      const data = await resp.json();
+      AdminUI.Auth.setTokens(data.access_token, data.refresh_token);
+      window.location.href = window.ADMIN_UI_BASE + '/dashboard';
+    } catch (err) {
+      alertEl.className = 'alert alert-error';
+      alertEl.textContent = err.message;
+      alertEl.style.display = 'block';
+      alertEl.focus();
+    }
+  });
+})();
+</script>
+</body>
+</html>
