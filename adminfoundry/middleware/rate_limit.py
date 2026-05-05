@@ -1,28 +1,9 @@
 import time
-from collections import defaultdict
+from sqlalchemy import select, func
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-
-
-class _SlidingWindowLimiter:
-    def __init__(self):
-        self._windows: dict[str, list[float]] = defaultdict(list)
-
-    def is_allowed(self, key: str, max_requests: int, window_seconds: int) -> bool:
-        now = time.monotonic()
-        cutoff = now - window_seconds
-        self._windows[key] = [t for t in self._windows[key] if t > cutoff]
-        if len(self._windows[key]) >= max_requests:
-            return False
-        self._windows[key].append(now)
-        return True
-
-    def reset(self) -> None:
-        self._windows.clear()
-
-
-_limiter = _SlidingWindowLimiter()
+from adminfoundry.models.rate_limit import RateLimitRequest
 
 # {path_prefix: (max_requests, window_seconds)}
 _LIMITS: dict[str, tuple[int, int]] = {
@@ -37,15 +18,30 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         for prefix, (max_req, window) in _LIMITS.items():
             if path.startswith(prefix):
                 ip = request.client.host if request.client else "unknown"
-                if not _limiter.is_allowed(f"{prefix}:{ip}", max_req, window):
-                    return JSONResponse(
-                        status_code=429,
-                        content={"detail": "Too many requests"},
-                        headers={"Retry-After": str(window)},
+                key = f"{prefix}:{ip}"
+                now = time.time()
+                cutoff = now - window
+
+                from adminfoundry.database import AsyncSessionLocal
+                async with AsyncSessionLocal() as db:
+                    count_result = await db.execute(
+                        select(func.count()).select_from(RateLimitRequest).where(
+                            RateLimitRequest.key == key,
+                            RateLimitRequest.ts > cutoff,
+                        )
                     )
+                    count = count_result.scalar_one()
+                    if count >= max_req:
+                        return JSONResponse(
+                            status_code=429,
+                            content={"detail": "Too many requests"},
+                            headers={"Retry-After": str(window)},
+                        )
+                    db.add(RateLimitRequest(key=key, ts=now))
+                    await db.commit()
                 break
         return await call_next(request)
 
 
 def reset_rate_limiter() -> None:
-    _limiter.reset()
+    """No-op — DB cleanup is handled by the clean_tables test fixture."""

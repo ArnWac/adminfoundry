@@ -14,7 +14,7 @@ from adminfoundry.auth import (
 from adminfoundry.database import get_db
 from adminfoundry.dependencies import get_current_user
 from adminfoundry.models.user import User
-from adminfoundry.schemas.auth import LoginRequest, RefreshRequest, TokenResponse
+from adminfoundry.schemas.auth import LoginRequest, PasswordResetConfirm, PasswordResetRequest, RefreshRequest, TokenResponse
 from adminfoundry.schemas.session import SessionRead, SessionRevoke
 from adminfoundry.schemas.user import UserPublic
 from adminfoundry.services.session_security import session_security
@@ -81,13 +81,15 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
 async def logout(
     request: Request,
     _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Revoke the current access token by blacklisting its JTI."""
     payload = getattr(request.state, "token_payload", {})
     jti = payload.get("jti", "")
     exp = payload.get("exp", 0)
     if jti:
-        blacklist_token(jti, exp)
+        await blacklist_token(jti, exp, db)
+    await db.commit()
 
 
 @router.get("/me", response_model=UserPublic)
@@ -125,6 +127,7 @@ async def revoke_session(
     jti: str,
     request: Request,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Revoke a specific session by JTI."""
     record = next(
@@ -137,7 +140,8 @@ async def revoke_session(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     session_security.revoke(jti)
     # Blacklist using the session's actual expiry so the JTI stays blocked until it naturally expires
-    blacklist_token(jti, record.expires_at.timestamp())
+    await blacklist_token(jti, record.expires_at.timestamp(), db)
+    await db.commit()
 
 
 @router.post("/step-up", status_code=status.HTTP_200_OK)
@@ -165,3 +169,67 @@ async def step_up(
             detail=f"Re-authentication required (token age exceeds {settings.STEP_UP_WINDOW_MINUTES} minutes)",
         )
     return {"step_up": True, "token_age_seconds": int(age.total_seconds())}
+
+
+# ---------------------------------------------------------------------------
+# Password reset
+# ---------------------------------------------------------------------------
+
+@router.post("/password-reset/request", status_code=status.HTTP_204_NO_CONTENT)
+async def password_reset_request(request: Request, body: PasswordResetRequest, db: AsyncSession = Depends(get_db)):
+    if not settings.PASSWORD_RESET_ENABLED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    result = await db.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
+    if user is None:
+        return  # don't reveal whether email exists
+
+    import secrets
+    from adminfoundry.models.password_reset_token import PasswordResetToken
+    from adminfoundry.email import send_email
+
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.PASSWORD_RESET_TIMEOUT_MINUTES)
+    db.add(PasswordResetToken(token=token, user_id=user.id, expires_at=expires_at))
+    await db.commit()
+
+    base_url = str(request.base_url).rstrip("/")
+    reset_url = f"{base_url}{settings.ADMIN_UI_PATH}/password-reset/confirm?token={token}"
+    await send_email(
+        to=user.email,
+        subject="Password reset",
+        body_text=f"Reset your password: {reset_url}\n\nThis link expires in {settings.PASSWORD_RESET_TIMEOUT_MINUTES} minutes.",
+        body_html=f'<p>Reset your password: <a href="{reset_url}">{reset_url}</a></p><p>Expires in {settings.PASSWORD_RESET_TIMEOUT_MINUTES} minutes.</p>',
+    )
+
+
+@router.post("/password-reset/confirm", status_code=status.HTTP_204_NO_CONTENT)
+async def password_reset_confirm(body: PasswordResetConfirm, db: AsyncSession = Depends(get_db)):
+    if not settings.PASSWORD_RESET_ENABLED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    from adminfoundry.models.password_reset_token import PasswordResetToken
+    from adminfoundry.auth import hash_password
+
+    result = await db.execute(
+        select(PasswordResetToken).where(PasswordResetToken.token == body.token)
+    )
+    record = result.scalar_one_or_none()
+
+    if record is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired token")
+    expires_at = record.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if record.used or expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired token")
+
+    user_result = await db.execute(select(User).where(User.id == record.user_id))
+    user = user_result.scalar_one_or_none()
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired token")
+
+    user.hashed_password = hash_password(body.new_password)
+    record.used = True
+    await db.commit()

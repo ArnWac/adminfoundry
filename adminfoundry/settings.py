@@ -1,5 +1,9 @@
+import warnings
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import json
+
+_DEFAULT_SECRET_KEY = "change-me-in-production"
 
 
 class Settings(BaseSettings):
@@ -26,6 +30,26 @@ class Settings(BaseSettings):
 
     # Step-up window: how recent a login must be for protected actions (minutes)
     STEP_UP_WINDOW_MINUTES: int = 15
+
+    # Email / Password-Reset
+    EMAIL_HOST: str = ""
+    EMAIL_PORT: int = 587
+    EMAIL_HOST_USER: str = ""
+    EMAIL_HOST_PASSWORD: str = ""
+    EMAIL_USE_TLS: bool = True
+    EMAIL_DEFAULT_FROM: str = "noreply@example.com"
+    PASSWORD_RESET_TIMEOUT_MINUTES: int = 30
+    PASSWORD_RESET_ENABLED: bool = True
+
+    @model_validator(mode="after")
+    def _check_secret_key(self) -> "Settings":
+        if self.SECRET_KEY == _DEFAULT_SECRET_KEY:
+            warnings.warn(
+                "SECRET_KEY is set to the default insecure value. "
+                "Set SECRET_KEY to a random secret before deploying to production.",
+                stacklevel=2,
+            )
+        return self
 
 
 settings = Settings()

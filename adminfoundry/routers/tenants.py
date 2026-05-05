@@ -175,7 +175,7 @@ async def revoke_impersonation(
     # Blacklist with a far-future expiry to ensure the token stays blocked
     from datetime import timedelta
     far_future = datetime.now(timezone.utc) + timedelta(days=365)
-    blacklist_token(body.jti, far_future.timestamp())
+    await blacklist_token(body.jti, far_future.timestamp(), db)
 
     log.revoked_at = datetime.now(timezone.utc)
     await db.commit()

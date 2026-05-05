@@ -1,3 +1,6 @@
+import asyncio
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,11 +14,26 @@ from adminfoundry.middleware.tenant import TenantMiddleware
 from adminfoundry.middleware.security_headers import SecurityHeadersMiddleware
 from adminfoundry.middleware.rate_limit import RateLimitMiddleware
 from adminfoundry.admin.router import create_coreadmin
+from adminfoundry.auth_provider import AuthProvider
+from adminfoundry.cleanup import periodic_cleanup
 import adminfoundry.admin_config  # noqa: F401 — trigger admin registrations
 
 config = CoreAdminConfig.from_settings(settings)
 
-app = FastAPI(title="coreAdmin API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(periodic_cleanup())
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+app = FastAPI(title="coreAdmin API", lifespan=lifespan)
+app.state.auth_provider = config.auth_provider or AuthProvider()
 
 app.add_middleware(UnhandledExceptionMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
@@ -32,7 +50,8 @@ app.add_middleware(
 
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
-app.include_router(auth.router)
+if config.include_auth_routes:
+    app.include_router(auth.router)
 app.include_router(health.router)
 app.include_router(users.router)
 app.include_router(roles.router)

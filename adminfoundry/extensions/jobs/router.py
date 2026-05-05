@@ -163,20 +163,28 @@ async def bulk_action(
     model_admin = _get_admin_or_404(model_name)
     token_payload = getattr(request.state, "token_payload", {})
 
+    from adminfoundry.admin.actions import AdminAction as _AdminAction
+
+    def _action_name(a):
+        return a.name if isinstance(a, _AdminAction) else a.get("name")
+
+    def _action_attr(a, key, default=None):
+        return getattr(a, key, None) if isinstance(a, _AdminAction) else a.get(key, default)
+
     action_def = next(
-        (a for a in (model_admin.actions or []) if a.get("name") == body.action), None,
+        (a for a in (model_admin.actions or []) if _action_name(a) == body.action), None,
     )
     if action_def is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Action '{body.action}' not defined on '{model_name}'",
         )
-    if action_def.get("confirm") and not body.confirm:
+    if _action_attr(action_def, "confirm", False) and not body.confirm:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Action '{body.action}' requires confirm=true",
         )
-    if not action_def.get("bulk", False):
+    if not _action_attr(action_def, "bulk", False):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Action '{body.action}' does not support bulk execution",
@@ -203,9 +211,18 @@ async def bulk_action(
         )
     ).scalars().all()
 
+    result_summary = f"Bulk '{body.action}' applied to {len(objects)} objects"
+    try:
+        if isinstance(action_def, _AdminAction):
+            result = await action_def.execute(objects, db, current_user)
+            result_summary = result.get("summary", result_summary)
+    except Exception as exc:
+        await job_service.update_status(db, job, JobStatus.failed, failure_summary=str(exc))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
     job = await job_service.update_status(
         db, job, JobStatus.completed, progress=100,
-        result_summary=f"Bulk '{body.action}' applied to {len(objects)} objects",
+        result_summary=result_summary,
     )
 
     return {

@@ -139,7 +139,11 @@ def build_field_metadata(model_admin: ModelAdmin, registry=None) -> list[FieldMe
 
 def build_model_contract(model_admin: ModelAdmin, registry=None) -> ModelContractMeta:
     fields = build_field_metadata(model_admin, registry=registry)
-    actions = [ActionMeta(**a) for a in model_admin.actions]
+    from adminfoundry.admin.actions import AdminAction as _AdminAction
+    actions = [
+        ActionMeta(**(a.to_dict() if isinstance(a, _AdminAction) else a))
+        for a in model_admin.actions
+    ]
     return ModelContractMeta(
         contract_version=CONTRACT_VERSION,
         model=model_admin.model_name,

@@ -148,6 +148,68 @@ async function initList(model) {
   if (!Auth.isLoggedIn()) { Auth.redirectToLogin(); return; }
 
   let meta, page = 1, pageSize = 20, q = '', orderBy = '';
+  const selected = new Set();
+
+  const actionBar = document.getElementById('action-bar');
+  const selectedCount = document.getElementById('selected-count');
+  const actionSelect = document.getElementById('action-select');
+
+  function updateActionBar() {
+    if (!actionBar) return;
+    const hasBulkActions = (meta?.actions || []).some(a => a.bulk);
+    if (!hasBulkActions) return;
+    if (selected.size === 0) {
+      actionBar.style.display = 'none';
+    } else {
+      actionBar.style.display = 'flex';
+      selectedCount.textContent = `${selected.size} selected`;
+    }
+  }
+
+  function initActionBar() {
+    if (!actionBar || !actionSelect) return;
+    const bulkActions = (meta?.actions || []).filter(a => a.bulk);
+    if (!bulkActions.length) return;
+    actionSelect.innerHTML = bulkActions.map(a =>
+      `<option value="${esc(a.name)}" data-danger="${a.danger}" data-confirm="${a.confirm}">${esc(a.label)}</option>`
+    ).join('');
+
+    document.getElementById('action-run')?.addEventListener('click', async () => {
+      if (!selected.size) return;
+      const opt = actionSelect.selectedOptions[0];
+      if (!opt) return;
+      const actionName = opt.value;
+      const needsConfirm = opt.dataset.confirm === 'true';
+      const isDanger = opt.dataset.danger === 'true';
+      if (needsConfirm) {
+        const label = opt.textContent;
+        const ok = confirm(`Run "${label}" on ${selected.size} item(s)? This cannot be undone.`);
+        if (!ok) return;
+      }
+      clearAlert();
+      try {
+        const result = await API.post(`/jobs/admin/${model}/bulk`, {
+          action: actionName,
+          object_ids: [...selected],
+          confirm: needsConfirm,
+        });
+        showSuccess(result.result_summary || `Action completed — ${result.affected} affected`);
+        selected.clear();
+        updateActionBar();
+        await load();
+      } catch (err) {
+        showError(fmtAPIError(err));
+      }
+    });
+
+    document.getElementById('action-clear')?.addEventListener('click', () => {
+      selected.clear();
+      updateActionBar();
+      document.querySelectorAll('.row-check').forEach(cb => cb.checked = false);
+      const selAll = document.getElementById('select-all');
+      if (selAll) selAll.checked = false;
+    });
+  }
 
   async function load() {
     const tableEl = document.getElementById('table-body');
@@ -159,6 +221,8 @@ async function initList(model) {
     if (q) url += `&q=${encodeURIComponent(q)}`;
     if (orderBy) url += `&order_by=${encodeURIComponent(orderBy)}`;
 
+    const hasBulkActions = (meta?.actions || []).some(a => a.bulk);
+
     try {
       const data = await API.get(url);
 
@@ -168,7 +232,10 @@ async function initList(model) {
         : (data.items[0] ? Object.keys(data.items[0]) : []);
 
       // Header
-      theadEl.innerHTML = '<tr>' + cols.map(c => {
+      const checkboxTh = hasBulkActions
+        ? `<th style="width:36px"><input type="checkbox" id="select-all" aria-label="Select all"></th>`
+        : '';
+      theadEl.innerHTML = '<tr>' + checkboxTh + cols.map(c => {
         const fieldMeta = meta?.fields?.find(f => f.name === c);
         const label = fieldMeta?.label || c;
         const arrow = c === orderBy ? ' ↑' : c === `-${orderBy}`.replace('-','') ? ' ↓' : '';
@@ -177,17 +244,40 @@ async function initList(model) {
 
       // Rows
       if (!data.items.length) {
-        tableEl.innerHTML = '<tr><td colspan="99" style="color:#586069">No records found.</td></tr>';
+        tableEl.innerHTML = `<tr><td colspan="99" style="color:#586069">No records found.</td></tr>`;
       } else {
         tableEl.innerHTML = data.items.map(item => {
-          const cells = cols.map(c => `<td>${fmtCell(item[c])}</td>`).join('');
           const id = item.id || '';
+          const isChecked = selected.has(id) ? ' checked' : '';
+          const checkTd = hasBulkActions
+            ? `<td><input type="checkbox" class="row-check" data-id="${id}" aria-label="Select row"${isChecked}></td>`
+            : '';
+          const cells = cols.map(c => `<td>${fmtCell(item[c])}</td>`).join('');
           const actions = `<td>
             <a class="btn btn-sm btn-secondary" href="${UI_BASE}/${model}/${id}">View</a>
             <a class="btn btn-sm btn-secondary" href="${UI_BASE}/${model}/${id}/edit">Edit</a>
           </td>`;
-          return `<tr>${cells}${actions}</tr>`;
+          return `<tr>${checkTd}${cells}${actions}</tr>`;
         }).join('');
+      }
+
+      // Checkbox events (delegated)
+      if (hasBulkActions) {
+        document.getElementById('select-all')?.addEventListener('change', e => {
+          document.querySelectorAll('.row-check').forEach(cb => {
+            cb.checked = e.target.checked;
+            if (e.target.checked) selected.add(cb.dataset.id);
+            else selected.delete(cb.dataset.id);
+          });
+          updateActionBar();
+        });
+        tableEl.addEventListener('change', e => {
+          const cb = e.target.closest('.row-check');
+          if (!cb) return;
+          if (cb.checked) selected.add(cb.dataset.id);
+          else selected.delete(cb.dataset.id);
+          updateActionBar();
+        });
       }
 
       // Pagination
@@ -204,6 +294,8 @@ async function initList(model) {
   } catch (_) {
     document.getElementById('page-title').textContent = model;
   }
+
+  initActionBar();
 
   // Search
   const searchEl = document.getElementById('search-input');

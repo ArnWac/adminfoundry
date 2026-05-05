@@ -14,7 +14,7 @@ from adminfoundry.models.tenant import Tenant
 from adminfoundry.models.audit_log import AuditLog
 from adminfoundry.models.impersonation_log import ImpersonationLog
 from adminfoundry.auth import create_access_token, create_refresh_token, create_impersonation_token
-from adminfoundry.token_blacklist import blacklist_token, is_blacklisted, clear_blacklist
+from adminfoundry.token_blacklist import blacklist_token, is_blacklisted
 from adminfoundry.auth import hash_password
 
 
@@ -26,24 +26,24 @@ def auth(user: User) -> dict:
 # Unit: token blacklist
 # ---------------------------------------------------------------------------
 
-def test_blacklist_token_is_detected():
+async def test_blacklist_token_is_detected(db: AsyncSession):
     import time
     jti = "test-jti-1"
     exp = time.time() + 3600
-    blacklist_token(jti, exp)
-    assert is_blacklisted(jti) is True
+    await blacklist_token(jti, exp, db)
+    assert await is_blacklisted(jti, db) is True
 
 
-def test_blacklist_expired_token_is_not_blocked():
+async def test_blacklist_expired_token_is_not_blocked(db: AsyncSession):
     import time
     jti = "test-jti-2"
     exp = time.time() - 1  # already expired
-    blacklist_token(jti, exp)
-    assert is_blacklisted(jti) is False
+    await blacklist_token(jti, exp, db)
+    assert await is_blacklisted(jti, db) is False
 
 
-def test_unknown_jti_is_not_blacklisted():
-    assert is_blacklisted("never-seen-jti") is False
+async def test_unknown_jti_is_not_blacklisted(db: AsyncSession):
+    assert await is_blacklisted("never-seen-jti", db) is False
 
 
 # ---------------------------------------------------------------------------

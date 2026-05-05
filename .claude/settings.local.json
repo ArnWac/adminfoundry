@@ -47,7 +47,23 @@
       "Bash(python -m pytest tests/test_admin_contract.py::test_contract_no_protected_fields_in_any_endpoint -vv --tb=short)",
       "Bash(Remove-Item \"f:\\\\08_Projekte\\\\WebApps\\\\coreAdmin\\\\coreAdmin\\\\coreAdmin_api\\\\admin\\\\ui_helpers.py\")",
       "Bash(xargs sed *)",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "Bash(find f:/08_Projekte/WebApps/coreAdmin -maxdepth 3 -name \"alembic.ini\" 2>/dev/null)",
+      "Read(//f/08_Projekte/WebApps/coreAdmin/**)",
+      "Bash(New-Item -ItemType Directory -Force -Path \"f:\\\\08_Projekte\\\\WebApps\\\\coreAdmin\\\\coreAdmin\\\\migrations\\\\shared\\\\versions\")",
+      "Bash(Out-Null)",
+      "Bash(New-Item -ItemType Directory -Force -Path \"f:\\\\08_Projekte\\\\WebApps\\\\coreAdmin\\\\coreAdmin\\\\migrations\\\\tenant\\\\versions\")",
+      "Bash(Write-Output \"dirs created\")",
+      "Bash(python -m alembic -c alembic_shared.ini revision --autogenerate -m \"initial\")",
+      "Bash(rm \"f:/08_Projekte/WebApps/coreAdmin/coreAdmin/.claude/projects/f--08-Projekte-WebApps-coreAdmin-coreAdmin/memory/project_v1_todo.md\")",
+      "Bash(python -m pytest tests/test_roles.py::test_require_role_fails_without_role -q --tb=long)",
+      "Bash(Get-ChildItem -Path \"f:\\\\08_Projekte\\\\WebApps\\\\coreAdmin\\\\coreAdmin\\\\adminfoundry\\\\routers\\\\admin_ui.py\" -ErrorAction SilentlyContinue)",
+      "Bash(Select-Object FullName, PSIsContainer)",
+      "Bash(python -m pytest tests/test_password_reset.py tests/test_admin_actions.py -q)",
+      "Bash(python -m pytest -q)"
+    ],
+    "additionalDirectories": [
+      "f:\\08_Projekte\\WebApps\\coreAdmin\\coreAdmin\\.claude\\projects\\f--08-Projekte-WebApps-coreAdmin-coreAdmin\\memory"
     ]
   }
 }

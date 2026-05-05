@@ -50,6 +50,16 @@ async def admin_ui_login(request: Request):
     return _tmpl("login.html", request)
 
 
+@router.get("/password-reset", response_class=HTMLResponse, include_in_schema=False)
+async def admin_ui_password_reset_request(request: Request):
+    return _tmpl("password_reset_request.html", request)
+
+
+@router.get("/password-reset/confirm", response_class=HTMLResponse, include_in_schema=False)
+async def admin_ui_password_reset_confirm(request: Request, token: str = ""):
+    return _tmpl("password_reset_confirm.html", request, token=token)
+
+
 @router.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 async def admin_ui_dashboard(request: Request):
     return _tmpl("nav.html", request, model=None)

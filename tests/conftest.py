@@ -19,6 +19,9 @@ from adminfoundry.models.audit_log import AuditLog  # noqa: F401 — register ta
 from adminfoundry.models.impersonation_log import ImpersonationLog  # noqa: F401 — register table
 from adminfoundry.extensions.jobs.models import Job  # noqa: F401 — register table
 from adminfoundry.models.change_request import ChangeRequest  # noqa: F401 — register table
+from adminfoundry.models.revoked_token import RevokedToken  # noqa: F401 — register table
+from adminfoundry.models.rate_limit import RateLimitRequest  # noqa: F401 — register table
+from adminfoundry.models.password_reset_token import PasswordResetToken  # noqa: F401 — register table
 from adminfoundry.auth import hash_password
 from adminfoundry.token_blacklist import clear_blacklist
 

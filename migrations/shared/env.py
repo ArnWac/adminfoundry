@@ -8,6 +8,9 @@ from adminfoundry.models.base import Base
 import adminfoundry.models.user  # noqa: F401 — register model
 import adminfoundry.models.role  # noqa: F401 — register model
 import adminfoundry.models.tenant  # noqa: F401 — register model
+import adminfoundry.models.revoked_token  # noqa: F401 — register model
+import adminfoundry.models.rate_limit  # noqa: F401 — register model
+import adminfoundry.models.password_reset_token  # noqa: F401 — register model
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)

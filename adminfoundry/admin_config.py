@@ -5,11 +5,42 @@ Note: admin CRUD for User is read/update only — use POST /api/v1/users to
 create users (the admin create path lacks the password hashing step).
 """
 from adminfoundry.admin import admin_site, ModelAdmin
+from adminfoundry.admin.actions import AdminAction
 from adminfoundry.auth import hash_password
 from adminfoundry.models.role import Role
 from adminfoundry.models.tenant import Tenant
 from adminfoundry.models.user import User
 from adminfoundry.settings import settings
+
+
+class DeactivateUsersAction(AdminAction):
+    name = "deactivate"
+    label = "Deactivate selected"
+    danger = True
+    confirm = True
+    bulk = True
+    single = True
+
+    async def execute(self, objects, db, user):
+        for obj in objects:
+            obj.is_active = False
+        await db.commit()
+        return {"summary": f"Deactivated {len(objects)} user(s)", "affected": len(objects)}
+
+
+class DisableTenantAction(AdminAction):
+    name = "disable"
+    label = "Disable tenant"
+    danger = True
+    confirm = True
+    bulk = False
+    single = True
+
+    async def execute(self, objects, db, user):
+        for obj in objects:
+            obj.is_active = False
+        await db.commit()
+        return {"summary": f"Disabled {len(objects)} tenant(s)", "affected": len(objects)}
 
 
 class UserAdmin(ModelAdmin):
@@ -34,16 +65,7 @@ class UserAdmin(ModelAdmin):
         if plain:
             data["hashed_password"] = hash_password(plain)
         return data
-    actions = [
-        {
-            "name": "deactivate",
-            "label": "Deactivate",
-            "danger": True,
-            "confirm": True,
-            "bulk": True,
-            "single": True,
-        }
-    ]
+    actions = [DeactivateUsersAction()]
 
 
 class RoleAdmin(ModelAdmin):
@@ -68,16 +90,7 @@ class TenantAdmin(ModelAdmin):
     filter_fields = ["is_active"]
     ordering = ["slug"]
     readonly_fields = ["id", "created_at", "updated_at"]
-    actions = [
-        {
-            "name": "disable",
-            "label": "Disable",
-            "danger": True,
-            "confirm": True,
-            "bulk": False,
-            "single": True,
-        }
-    ]
+    actions = [DisableTenantAction()]
 
 
 admin_site.register(UserAdmin())

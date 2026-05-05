@@ -5,7 +5,10 @@ Use CoreAdminConfig.from_settings(settings) to build from the env-backed Setting
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from adminfoundry.auth_provider import AuthProvider
 
 
 @dataclass
@@ -35,6 +38,11 @@ class CoreAdminConfig:
     # User-supplied extension instances (loaded in registration order)
     extensions: list[Any] = field(default_factory=list)
 
+    # Optional custom auth provider — None uses the built-in JWT provider
+    auth_provider: AuthProvider | None = None
+    # Set False to skip mounting built-in login/logout/refresh routes
+    include_auth_routes: bool = True
+
     @classmethod
     def from_settings(cls, settings: Any) -> CoreAdminConfig:
         """Build config from the env-backed Settings object."""
@@ -43,6 +51,8 @@ class CoreAdminConfig:
             enable_multi_tenant=getattr(settings, "MULTI_TENANT", False),
             enable_basic_audit=True,
             enable_workflows=getattr(settings, "ENABLE_WORKFLOWS", False),
+            auth_provider=None,
+            include_auth_routes=True,
         )
 
     def enabled_extension_names(self) -> list[str]:
