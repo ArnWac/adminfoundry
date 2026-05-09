@@ -35,6 +35,15 @@ class CoreAdminConfig:
     enable_basic_audit: bool = True
     enable_workflows: bool = False
 
+    # Locale defaults — applied as the initial value for all users who have
+    # not yet saved a personal preference. Users can override in Settings.
+    # language: BCP 47 tag, e.g. "en", "de", "fr"
+    default_language: str = "en"
+    # date_format: "locale" | "iso" | "eu" | "us" | "custom"
+    default_date_format: str = "locale"
+    default_date_pattern: str = "%Y-%m-%d %H:%M"
+    default_show_timezone: bool = False
+
     # User-supplied extension instances (loaded in registration order)
     extensions: list[Any] = field(default_factory=list)
 
@@ -42,6 +51,38 @@ class CoreAdminConfig:
     auth_provider: AuthProvider | None = None
     # Set False to skip mounting built-in login/logout/refresh routes
     include_auth_routes: bool = True
+
+    # Cache backend URL — None uses in-process memory; "redis://..." uses Redis
+    cache_backend: str | None = None
+
+    # Storage backend instance — None uses LocalStorage("uploads")
+    storage_backend: Any | None = None
+
+    # Dashboard widgets — empty list uses DEFAULT_WIDGETS (ModelCounts + AdminMetrics)
+    dashboard_widgets: list[Any] = field(default_factory=list)
+
+    @classmethod
+    def from_pyproject(cls, path: str | None = None) -> "CoreAdminConfig":
+        """Build config from [tool.adminfoundry] in pyproject.toml (Python 3.11+ tomllib)."""
+        import tomllib
+        from pathlib import Path
+
+        toml_path = Path(path) if path else Path("pyproject.toml")
+        if not toml_path.exists():
+            return cls()
+        with open(toml_path, "rb") as f:
+            data = tomllib.load(f)
+        s = data.get("tool", {}).get("adminfoundry", {})
+        return cls(
+            enable_builtin_ui=s.get("enable_builtin_ui", True),
+            enable_multi_tenant=s.get("enable_multi_tenant", False),
+            enable_basic_audit=s.get("enable_basic_audit", True),
+            enable_workflows=s.get("enable_workflows", False),
+            default_language=s.get("default_language", "en"),
+            default_date_format=s.get("default_date_format", "locale"),
+            default_date_pattern=s.get("default_date_pattern", "%Y-%m-%d %H:%M"),
+            default_show_timezone=s.get("default_show_timezone", False),
+        )
 
     @classmethod
     def from_settings(cls, settings: Any) -> CoreAdminConfig:

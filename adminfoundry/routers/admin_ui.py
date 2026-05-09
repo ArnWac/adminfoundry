@@ -20,12 +20,15 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 router = APIRouter(tags=["admin-ui"])
 
+# Populated by create_coreadmin(); read by _tmpl() to embed locale defaults in every page.
+_locale_defaults: dict = {"language": "en", "date_format": "locale", "date_pattern": "%Y-%m-%d %H:%M", "show_timezone": False}
+
 
 def _tmpl(name: str, request: Request, **ctx):
     # Starlette 1.0 API: TemplateResponse(request, name, context)
     return templates.TemplateResponse(
         request, name, {"ui_base": settings.ADMIN_UI_PATH, "renderer_version": RENDERER_VERSION,
-                        "admin_title": settings.ADMIN_TITLE, **ctx}
+                        "admin_title": settings.ADMIN_TITLE, "locale_defaults": _locale_defaults, **ctx}
     )
 
 

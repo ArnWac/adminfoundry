@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 import adminfoundry.admin_config  # noqa: F401 — registriert User, Role, Tenant
 from adminfoundry.admin import admin_site
+from adminfoundry.admin.actions import AdminAction
 from adminfoundry.admin.model_admin import ModelAdmin
 from adminfoundry.admin.router import create_coreadmin
 from adminfoundry.auth import hash_password
@@ -21,8 +22,6 @@ from adminfoundry.models.role import Role       # noqa: F401 — register table
 from adminfoundry.models.tenant import Tenant   # noqa: F401 — register table
 from adminfoundry.models.user import User
 from adminfoundry.routers import auth, health
-from adminfoundry.routers.admin_ui import router as admin_ui_router, get_static_app
-from adminfoundry.settings import settings
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +41,19 @@ class Post(TimestampedBase):
 # Admin-Konfiguration
 # ---------------------------------------------------------------------------
 
+class PublishAction(AdminAction):
+    name    = "publish_all"
+    label   = "Publish selected"
+    confirm = True
+    danger  = False
+
+    async def execute(self, objects, db, user):
+        for obj in objects:
+            obj.published = True
+        await db.commit()
+        return {"summary": f"{len(objects)} post(s) published"}
+
+
 class PostAdmin(ModelAdmin):
     model        = Post
     label        = "Post"
@@ -51,6 +63,7 @@ class PostAdmin(ModelAdmin):
     filter_fields  = ["published"]
     ordering       = ["-created_at"]
     readonly_fields = ["id", "created_at", "updated_at"]
+    actions        = [PublishAction()]
 
 
 admin_site.register(PostAdmin())
@@ -91,7 +104,7 @@ app = FastAPI(title="Blog Admin", lifespan=lifespan)
 app.include_router(auth.router)
 app.include_router(health.router)
 
-create_coreadmin(app, config=CoreAdminConfig())
-
-app.mount(f"{settings.ADMIN_UI_PATH}/static", get_static_app(), name="admin-static")
-app.include_router(admin_ui_router, prefix=settings.ADMIN_UI_PATH)
+create_coreadmin(app, config=CoreAdminConfig(
+    default_date_format="eu",
+    default_show_timezone=True,
+))

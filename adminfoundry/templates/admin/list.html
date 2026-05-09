@@ -4,18 +4,18 @@
 {% block content %}
 <div class="page-header">
   <h1 id="page-title">{{ model_label_plural }}</h1>
-  <a href="{{ ui_base }}/{{ model }}/new" class="btn btn-primary" aria-label="Create new {{ model_label }}">+ New</a>
+  <a href="{{ ui_base }}/{{ model }}/new" class="btn btn-primary">+ <span data-i18n="action_new">New</span></a>
 </div>
 <div class="card">
-  <div class="toolbar" role="search">
+  <div class="toolbar" role="search" style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
     <label for="search-input" class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden">Search {{ model_label_plural }}</label>
-    <input type="search" id="search-input" placeholder="Search…" aria-label="Search {{ model_label_plural }}">
-  </div>
-  <div id="action-bar" style="display:none;align-items:center;gap:.5rem;padding:.5rem 0;border-bottom:1px solid var(--border,#e1e4e8)">
-    <span id="selected-count" style="font-size:.875rem;color:var(--text-muted,#6b7280)"></span>
-    <select id="action-select" class="form-control" style="width:auto" aria-label="Select action"></select>
-    <button id="action-run" class="btn btn-sm btn-danger">Run</button>
-    <button id="action-clear" class="btn btn-sm btn-secondary">Clear selection</button>
+    <input type="search" id="search-input" placeholder="Search…" aria-label="Search {{ model_label_plural }}" style="flex:1;min-width:160px">
+    <div id="action-bar" style="display:none;align-items:center;gap:.5rem">
+      <select id="action-select" class="form-control" style="width:auto" aria-label="Select action"></select>
+      <button id="action-run" class="btn btn-sm btn-primary" data-i18n="action_run">Run</button>
+      <span id="selected-count" style="font-size:.875rem;color:var(--text-muted,#6b7280);display:none"></span>
+      <button id="action-clear" class="btn btn-sm btn-secondary" style="display:none" data-i18n="action_clear_selection">Clear</button>
+    </div>
   </div>
   <div role="region" aria-label="{{ model_label_plural }} list" aria-live="polite">
     <table aria-label="{{ model_label_plural }} records">
@@ -24,6 +24,18 @@
     </table>
   </div>
   <nav id="pagination" class="pagination" aria-label="Pagination"></nav>
+</div>
+
+<!-- Confirm modal -->
+<div id="confirm-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.45);align-items:center;justify-content:center">
+  <div style="background:var(--surface,#fff);color:var(--text,#111);border-radius:8px;padding:1.5rem 2rem;max-width:420px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.25)">
+    <h3 id="confirm-title" style="margin:0 0 .6rem;font-size:1.1rem"></h3>
+    <p id="confirm-body" style="margin:0 0 1.4rem;color:var(--text-muted,#6b7280);font-size:.925rem"></p>
+    <div style="display:flex;gap:.5rem;justify-content:flex-end">
+      <button id="confirm-cancel" class="btn btn-secondary" data-i18n="action_cancel">Cancel</button>
+      <button id="confirm-ok" class="btn btn-primary" data-i18n="action_confirm">Confirm</button>
+    </div>
+  </div>
 </div>
 {% endblock %}
 

@@ -75,7 +75,7 @@ class RoleAdmin(ModelAdmin):
     label = "Permission Group"
     label_plural = "Permissions"
     description = "Permission groups assignable to users — CRUD capabilities configured below"
-    list_display = ["name", "id"]
+    list_display = ["name", "description", "created_at"]
     search_fields = ["name"]
     ordering = ["name"]
     readonly_fields = ["id", "created_at", "updated_at"]
@@ -89,7 +89,7 @@ class TenantAdmin(ModelAdmin):
     label = "Tenant"
     label_plural = "Tenants"
     description = "Tenant organisations in multi-tenant mode"
-    list_display = ["name", "slug", "is_active"]
+    list_display = ["name", "slug", "is_active", "timezone", "language"]
     search_fields = ["name", "slug"]
     filter_fields = ["is_active"]
     ordering = ["slug"]

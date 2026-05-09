@@ -1,10 +1,18 @@
 from pydantic import BaseModel
 
 
+class TenantLocale(BaseModel):
+    timezone: str | None = None
+    language: str | None = None
+    date_format: str | None = None
+    date_pattern: str | None = None
+
+
 class TenantContext(BaseModel):
     id: str
     name: str
     slug: str
+    locale: TenantLocale | None = None
 
 
 class ModelCapabilities(BaseModel):

@@ -6,8 +6,9 @@ from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from adminfoundry import signals as _signals
 from adminfoundry.admin.capabilities import build_capabilities, build_admin_context
-from adminfoundry.admin.contract import build_model_contract, build_model_contract_for_user, CONTRACT_VERSION
+from adminfoundry.admin.contract import build_model_contract, CONTRACT_VERSION
 from adminfoundry.admin.filter_builder import filter_builder
 from adminfoundry.admin.navigation import build_navigation
 from adminfoundry.admin.registry import admin_site
@@ -176,6 +177,33 @@ async def admin_metrics(
 ):
     """Return admin operational metrics snapshot — no secrets or protected field content."""
     return metrics_snapshot()
+
+
+@router.get("/dashboard")
+async def admin_dashboard(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return rendered dashboard widgets for the current user."""
+    from adminfoundry.dashboard import DEFAULT_WIDGETS
+
+    widgets_cfg = (
+        (_admin_config.dashboard_widgets if _admin_config else None) or DEFAULT_WIDGETS
+    )
+    provider = getattr(request.app.state, "auth_provider", None)
+    is_super = provider.is_superadmin(current_user) if provider else getattr(current_user, "is_superadmin", False)
+
+    result = []
+    for w in widgets_cfg:
+        if w.superadmin_only and not is_super:
+            continue
+        try:
+            data = await w.get_data(current_user, db, request)
+        except Exception:
+            data = {}
+        result.append({"id": w.id, "title": w.title, "type": w.widget_type(), "data": data})
+    return {"widgets": result}
 
 
 @router.get("/compatibility")
@@ -383,6 +411,7 @@ async def create_object(
     request.state.audit_object_id = str(obj.id)
     request.state.audit_actor = current_user.email
 
+    await _signals.emit("post_create", model_name=model_name, obj=obj, user=current_user)
     return serializer.serialize(obj, model_admin)
 
 
@@ -510,6 +539,7 @@ async def get_permission_matrix(
     return [
         {
             "model_name": mn,
+            "label": getattr(admin_site.get(mn), "label_plural", mn),
             "can_list": perms[mn].can_list if mn in perms else False,
             "can_create": perms[mn].can_create if mn in perms else False,
             "can_update": perms[mn].can_update if mn in perms else False,
@@ -563,6 +593,219 @@ async def save_permission_matrix(
     request.state.audit_action = "updated"
     request.state.audit_object_id = str(role_id)
     request.state.audit_changes = changes or None
+
+
+@router.post("/{model_name}/bulk-action")
+async def bulk_action_direct(
+    model_name: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Execute a declared bulk action directly — no job queue required."""
+    from adminfoundry.admin.actions import AdminAction as _AdminAction
+
+    model_admin = _get_admin_or_404(model_name)
+    payload = getattr(request.state, "token_payload", {})
+    _check_model_access(model_admin, current_user, payload)
+
+    body = await request.json()
+    action_name: str = body.get("action", "")
+    object_ids: list = body.get("object_ids", [])
+
+    def _attr(a, key, default=None):
+        return getattr(a, key, None) if isinstance(a, _AdminAction) else a.get(key, default)
+
+    action_def = next(
+        (a for a in (model_admin.actions or []) if _attr(a, "name") == action_name), None
+    )
+    if action_def is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Action '{action_name}' not defined on '{model_name}'")
+    if not _attr(action_def, "bulk", False):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Action '{action_name}' does not support bulk execution")
+
+    objects = (
+        await db.execute(select(model_admin.model).where(model_admin.model.id.in_(object_ids)))
+    ).scalars().all()
+
+    if not isinstance(action_def, _AdminAction):
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                            detail=f"Action '{action_name}' has no execute() implementation — use AdminAction subclass")
+
+    try:
+        result = await action_def.execute(objects, db, current_user)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+    request.state.audit_action = "bulk_action"
+    request.state.audit_object_id = action_name
+    request.state.audit_actor = current_user.email
+
+    return {
+        "action": action_name,
+        "affected": len(objects),
+        "summary": result.get("summary", f"{len(objects)} object(s) updated"),
+    }
+
+
+@router.get("/{model_name}/export")
+async def export_objects(
+    model_name: str,
+    request: Request,
+    format: str = Query("csv", pattern="^(csv|json|xlsx)$"),
+    q: str | None = Query(None),
+    order_by: str | None = Query(None),
+    tz: str | None = Query(None, description="IANA timezone name, e.g. Europe/Berlin"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Export all matching records as CSV, JSON, or XLSX (max 10 000 rows).
+
+    Pass ``tz`` to convert datetime fields to a specific timezone (IANA name).
+    Defaults to UTC when omitted.
+    """
+    from fastapi.responses import Response, StreamingResponse
+    import csv
+    import io
+    from datetime import datetime, timezone as _tz_utc
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    _target_zone = None
+    if tz:
+        try:
+            _target_zone = ZoneInfo(tz)
+        except ZoneInfoNotFoundError:
+            pass
+
+    def _apply_tz(value):
+        if not isinstance(value, datetime):
+            return value
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=_tz_utc.utc)
+        if _target_zone:
+            value = value.astimezone(_target_zone)
+        # Excel-friendly format: YYYY-MM-DD HH:MM:SS (no T, no microseconds, no offset)
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+
+    model_admin = _get_admin_or_404(model_name)
+    payload = getattr(request.state, "token_payload", {})
+    _check_model_access(model_admin, current_user, payload)
+
+    stmt = select(model_admin.model)
+    tf = _tenant_filter(request, model_admin)
+    if tf is not None:
+        stmt = stmt.where(tf)
+    rf = policy_engine.get_record_filter(current_user, model_admin, payload)
+    if rf is not None:
+        stmt = stmt.where(rf)
+    search = filter_builder.build_search(model_admin, q)
+    if search is not None:
+        stmt = stmt.where(search)
+    for f in filter_builder.build_filters(model_admin, dict(request.query_params)):
+        stmt = stmt.where(f)
+    ordering = filter_builder.build_ordering(model_admin, order_by)
+    if ordering is not None:
+        stmt = stmt.order_by(ordering)
+    stmt = stmt.limit(10_000)
+
+    items = (await db.execute(stmt)).scalars().all()
+
+    import sqlalchemy.types as _sa_types
+
+    def _is_dt_col(col) -> bool:
+        return isinstance(col.type, (_sa_types.DateTime, _sa_types.DATETIME, _sa_types.TIMESTAMP))
+
+    def _col_header(col) -> str:
+        if _is_dt_col(col) and tz:
+            return f"{col.name} ({tz})"
+        return col.name
+
+    def _serialize_export(obj) -> dict:
+        excluded = model_admin.all_protected
+        result = {}
+        for col in obj.__table__.columns:
+            if col.name in excluded:
+                continue
+            result[_col_header(col)] = _apply_tz(getattr(obj, col.name))
+        return result
+
+    rows = [_serialize_export(obj) for obj in items]
+
+    tz_label = (tz or "UTC").replace("/", "-")
+    filename = f"{model_name}_export_{tz_label}"
+
+    if format == "json":
+        import json
+        content = json.dumps(rows, default=str, indent=2)
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}.json"'},
+        )
+
+    if format == "xlsx":
+        try:
+            import openpyxl  # type: ignore[import]
+        except ImportError:
+            raise HTTPException(
+                status_code=501,
+                detail="XLSX export requires openpyxl: pip install openpyxl",
+            )
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        if rows:
+            ws.append(list(rows[0].keys()))
+            for row in rows:
+                ws.append([str(v) if v is not None else "" for v in row.values()])
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return Response(
+            content=buf.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}.xlsx"'},
+        )
+
+    # CSV (default)
+    buf = io.StringIO()
+    if rows:
+        writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: ("" if v is None else str(v)) for k, v in row.items()})
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.csv"'},
+    )
+
+
+@router.post("/upload", status_code=status.HTTP_201_CREATED)
+async def upload_file(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Upload a file to the configured storage backend. Returns {path, url}."""
+    from fastapi import UploadFile
+    from adminfoundry.storage import storage, generate_path
+
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" not in content_type:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                            detail="Multipart form-data required")
+
+    form = await request.form()
+    file: UploadFile | None = form.get("file")  # type: ignore[assignment]
+    if file is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="Field 'file' is required")
+
+    prefix = str(form.get("prefix", ""))
+    path = generate_path(file.filename or "upload", prefix)
+    saved = await storage.save(path, file.file)
+    return {"path": saved, "url": storage.url(saved)}
 
 
 @router.get("/{model_name}/{object_id}")
@@ -640,6 +883,7 @@ async def update_object(
     request.state.audit_actor = current_user.email
     request.state.audit_changes = changes or None
 
+    await _signals.emit("post_update", model_name=model_name, obj=obj, user=current_user, changes=changes)
     return serializer.serialize(obj, model_admin)
 
 
@@ -665,12 +909,14 @@ async def delete_object(
     if not rp.can_delete:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access to this record is denied")
 
+    await _signals.emit("pre_delete", model_name=model_name, obj=obj, user=current_user)
     await db.delete(obj)
     await db.commit()
 
     request.state.audit_action = "deleted"
     request.state.audit_object_id = str(object_id)
     request.state.audit_actor = current_user.email
+    await _signals.emit("post_delete", model_name=model_name, object_id=str(object_id), user=current_user)
 
 
 def create_coreadmin(app, config=None) -> None:
@@ -681,7 +927,35 @@ def create_coreadmin(app, config=None) -> None:
     """
     global _admin_config
     _admin_config = config
+
+    from adminfoundry.auth_provider import AuthProvider
+    app.state.auth_provider = (config.auth_provider if config else None) or AuthProvider()
+
+    if config:
+        from adminfoundry import cache as _cache_mod, storage as _storage_mod, i18n as _i18n_mod
+        if config.cache_backend:
+            _cache_mod.configure(config.cache_backend)
+        if config.storage_backend:
+            _storage_mod.configure(config.storage_backend)
+        if config.default_language:
+            _i18n_mod.set_default_language(config.default_language)
+
     app.include_router(router)
+
+    from adminfoundry.routers import admin_ui as _admin_ui_module
+    _admin_ui_module._locale_defaults = {
+        "language": config.default_language if config else "en",
+        "date_format": config.default_date_format if config else "locale",
+        "date_pattern": config.default_date_pattern if config else "%Y-%m-%d %H:%M",
+        "show_timezone": config.default_show_timezone if config else False,
+    }
+
+    if config is None or config.enable_builtin_ui:
+        from adminfoundry.settings import settings
+        from adminfoundry.routers.admin_ui import router as admin_ui_router, get_static_app
+        ui_path = settings.ADMIN_UI_PATH
+        app.mount(f"{ui_path}/static", get_static_app(), name="admin-static")
+        app.include_router(admin_ui_router, prefix=ui_path)
 
     # Always include the audit endpoint (required for change history in the UI)
     from adminfoundry.routers.audit import router as audit_router

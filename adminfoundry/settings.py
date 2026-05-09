@@ -1,7 +1,7 @@
 import warnings
+from functools import lru_cache
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-import json
 
 _DEFAULT_SECRET_KEY = "change-me-in-production"
 
@@ -53,4 +53,9 @@ class Settings(BaseSettings):
         return self
 
 
-settings = Settings()
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()
+
+
+settings = get_settings()  # backward-compat alias

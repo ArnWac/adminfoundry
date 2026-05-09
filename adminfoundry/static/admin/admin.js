@@ -21,6 +21,28 @@ const Auth = {
 const UI_BASE = window.ADMIN_UI_BASE || '/admin-ui';
 
 // ---------------------------------------------------------------------------
+// i18n — T(key, vars) looks up the active language, falls back to 'en', then key
+// ---------------------------------------------------------------------------
+function T(key, vars) {
+  const lang = (typeof Prefs !== 'undefined' && Prefs.getLanguage?.())
+    || window.ADMIN_TENANT_LOCALE?.language
+    || window.ADMIN_LOCALE_DEFAULTS?.language
+    || 'en';
+  const i18n = window.ADMIN_I18N || {};
+  const catalog = i18n[lang] || i18n['en'] || {};
+  let s = Object.prototype.hasOwnProperty.call(catalog, key) ? catalog[key] : key;
+  if (vars) Object.entries(vars).forEach(([k, v]) => { s = s.replaceAll(`{${k}}`, String(v)); });
+  return s;
+}
+
+// Apply data-i18n / data-i18n-placeholder / data-i18n-aria attributes to static template HTML
+function applyI18n() {
+  document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = T(el.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => { el.placeholder = T(el.dataset.i18nPlaceholder); });
+  document.querySelectorAll('[data-i18n-aria]').forEach(el => { el.setAttribute('aria-label', T(el.dataset.i18nAria)); });
+}
+
+// ---------------------------------------------------------------------------
 // API client
 // ---------------------------------------------------------------------------
 const API = {
@@ -124,7 +146,7 @@ async function initNav(activeModel) {
       navEl.innerHTML = nav.items.map(item => {
         const active = item.model === activeModel ? ' class="active"' : '';
         return `<a href="${UI_BASE}/${item.model}"${active}>${esc(item.label_plural)}</a>`;
-      }).join('') || '<span style="opacity:.5;font-size:.8rem">No models registered</span>';
+      }).join('') || `<span style="opacity:.5;font-size:.8rem">${T('text_no_models')}</span>`;
     }
 
     if (userEl) {
@@ -134,13 +156,17 @@ async function initNav(activeModel) {
     if (ctx.is_impersonating) {
       const banner = document.createElement('div');
       banner.className = 'impersonation-banner';
-      banner.textContent = `Impersonating — token issued by: ${ctx.impersonated_by}`;
+      banner.textContent = T('label_impersonating', {by: ctx.impersonated_by});
       document.body.prepend(banner);
     }
 
     if (ctx.tenant) {
       const tenantEl = document.getElementById('tenant-ctx');
-      if (tenantEl) tenantEl.textContent = `Tenant: ${ctx.tenant.slug}`;
+      if (tenantEl) tenantEl.textContent = T('label_tenant_ctx', {slug: ctx.tenant.slug});
+      if (ctx.tenant.locale) {
+        window.ADMIN_TENANT_LOCALE = ctx.tenant.locale;
+        applyI18n();
+      }
     }
   } catch (e) {
     // nav failure must not break the page
@@ -159,59 +185,148 @@ async function initList(model) {
   const selected = new Set();
 
   const actionBar = document.getElementById('action-bar');
-  const selectedCount = document.getElementById('selected-count');
+  const selectedCountEl = document.getElementById('selected-count');
   const actionSelect = document.getElementById('action-select');
+  const actionClearBtn = document.getElementById('action-clear');
 
-  function updateActionBar() {
-    if (!actionBar) return;
-    const hasBulkActions = (meta?.actions || []).some(a => a.bulk);
-    if (!hasBulkActions) return;
-    if (selected.size === 0) {
-      actionBar.style.display = 'none';
+  // Resolve selection count label; export actions don't need selection
+  function _isExportAction(val) { return val && val.startsWith('__export_'); }
+
+  function updateSelectionUI() {
+    if (!selectedCountEl || !actionClearBtn) return;
+    if (selected.size > 0) {
+      selectedCountEl.style.display = '';
+      selectedCountEl.textContent = T('label_n_selected', {count: selected.size});
+      actionClearBtn.style.display = '';
     } else {
-      actionBar.style.display = 'flex';
-      selectedCount.textContent = `${selected.size} selected`;
+      selectedCountEl.style.display = 'none';
+      actionClearBtn.style.display = 'none';
     }
+  }
+
+  // Trigger download from export endpoint
+  function _doExport(fmt) {
+    let url = `${API_BASE}/admin/${model}/export?format=${fmt}`;
+    if (q) url += `&q=${encodeURIComponent(q)}`;
+    if (orderBy) url += `&order_by=${encodeURIComponent(orderBy)}`;
+    // Use tenant timezone (org reference) — falls back to UTC on server if unset
+    const exportTz = window.ADMIN_TENANT_LOCALE?.timezone;
+    if (exportTz) url += `&tz=${encodeURIComponent(exportTz)}`;
+    const params = new URLSearchParams(window.location.search);
+    params.forEach((v, k) => {
+      if (!['q', 'order_by', 'page', 'page_size', 'format', 'tz'].includes(k))
+        url += `&${k}=${encodeURIComponent(v)}`;
+    });
+    const token = Auth.getToken();
+    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then(r => {
+        if (!r.ok) throw new Error(`Export failed: ${r.status}`);
+        const cd = r.headers.get('content-disposition') || '';
+        const fname = cd.match(/filename="([^"]+)"/)?.[1] || `export.${fmt}`;
+        return r.blob().then(blob => ({ blob, fname }));
+      })
+      .then(({ blob, fname }) => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = fname;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      })
+      .catch(err => showError(err.message));
+  }
+
+  // Promise-based confirm modal (replaces window.confirm)
+  function showConfirmModal(title, body, isDanger) {
+    return new Promise(resolve => {
+      const modal = document.getElementById('confirm-modal');
+      if (!modal) { resolve(window.confirm(`${title}\n${body}`)); return; }
+      document.getElementById('confirm-title').textContent = title;
+      document.getElementById('confirm-body').textContent = body;
+      const okBtn = document.getElementById('confirm-ok');
+      const cancelBtn = document.getElementById('confirm-cancel');
+      okBtn.className = `btn ${isDanger ? 'btn-danger' : 'btn-primary'}`;
+      modal.style.display = 'flex';
+
+      function cleanup(result) {
+        modal.style.display = 'none';
+        okBtn.removeEventListener('click', onOk);
+        cancelBtn.removeEventListener('click', onCancel);
+        resolve(result);
+      }
+      function onOk()     { cleanup(true);  }
+      function onCancel() { cleanup(false); }
+      okBtn.addEventListener('click', onOk);
+      cancelBtn.addEventListener('click', onCancel);
+    });
   }
 
   function initActionBar() {
     if (!actionBar || !actionSelect) return;
+
     const bulkActions = (meta?.actions || []).filter(a => a.bulk);
-    if (!bulkActions.length) return;
-    actionSelect.innerHTML = bulkActions.map(a =>
+    const exportOptions = [
+      { value: '__export_csv__',  label: T('option_export_csv')  },
+      { value: '__export_json__', label: T('option_export_json') },
+      { value: '__export_xlsx__', label: T('option_export_xlsx') },
+    ];
+
+    // Nothing to show — hide bar and return
+    if (!bulkActions.length && !exportOptions.length) return;
+
+    actionBar.style.display = 'flex';
+
+    let html = bulkActions.map(a =>
       `<option value="${esc(a.name)}" data-danger="${a.danger}" data-confirm="${a.confirm}">${esc(a.label)}</option>`
     ).join('');
 
+    if (bulkActions.length) html += `<option disabled>──────────</option>`;
+    html += exportOptions.map(o => `<option value="${o.value}">${esc(o.label)}</option>`).join('');
+    actionSelect.innerHTML = html;
+
     document.getElementById('action-run')?.addEventListener('click', async () => {
-      if (!selected.size) return;
       const opt = actionSelect.selectedOptions[0];
       if (!opt) return;
       const actionName = opt.value;
+
+      // Export actions — no selection required
+      if (_isExportAction(actionName)) {
+        const fmt = actionName.replace('__export_', '').replace('__', '');
+        _doExport(fmt);
+        return;
+      }
+
+      if (!selected.size) { showError(T('error_no_selection')); return; }
+
       const needsConfirm = opt.dataset.confirm === 'true';
       const isDanger = opt.dataset.danger === 'true';
+
       if (needsConfirm) {
-        const label = opt.textContent;
-        const ok = confirm(`Run "${label}" on ${selected.size} item(s)? This cannot be undone.`);
+        const label = opt.textContent.trim();
+        const ok = await showConfirmModal(
+          label,
+          T('confirm_bulk_action', {label, count: selected.size}),
+          isDanger,
+        );
         if (!ok) return;
       }
+
       try {
-        const result = await API.post(`/jobs/admin/${model}/bulk`, {
+        const result = await API.post(`/admin/${model}/bulk-action`, {
           action: actionName,
           object_ids: [...selected],
-          confirm: needsConfirm,
         });
-        showSuccess(result.result_summary || `Action completed — ${result.affected} affected`);
+        showSuccess(result.summary || T('label_action_done', {count: result.affected ?? selected.size}));
         selected.clear();
-        updateActionBar();
+        updateSelectionUI();
         await load();
       } catch (err) {
         showError(fmtAPIError(err));
       }
     });
 
-    document.getElementById('action-clear')?.addEventListener('click', () => {
+    actionClearBtn?.addEventListener('click', () => {
       selected.clear();
-      updateActionBar();
+      updateSelectionUI();
       document.querySelectorAll('.row-check').forEach(cb => cb.checked = false);
       const selAll = document.getElementById('select-all');
       if (selAll) selAll.checked = false;
@@ -222,7 +337,7 @@ async function initList(model) {
     const tableEl = document.getElementById('table-body');
     const theadEl = document.getElementById('table-head');
     const paginEl = document.getElementById('pagination');
-    tableEl.innerHTML = '<tr><td colspan="99" class="loading">Loading…</td></tr>';
+    tableEl.innerHTML = `<tr><td colspan="99" class="loading">${T('status_loading')}</td></tr>`;
 
     let url = `/admin/${model}?page=${page}&page_size=${pageSize}`;
     if (q) url += `&q=${encodeURIComponent(q)}`;
@@ -240,25 +355,25 @@ async function initList(model) {
 
       // Header
       const checkboxTh = hasBulkActions
-        ? `<th style="width:36px"><input type="checkbox" id="select-all" aria-label="Select all"></th>`
+        ? `<th style="width:36px"><input type="checkbox" id="select-all" aria-label="${T('aria_select_all')}"></th>`
         : '';
       theadEl.innerHTML = '<tr>' + checkboxTh + cols.map(c => {
         const fieldMeta = meta?.fields?.find(f => f.name === c);
         const label = fieldMeta?.label || c;
         const arrow = c === orderBy ? ' ↑' : c === `-${orderBy}`.replace('-','') ? ' ↓' : '';
         return `<th><a href="#" data-sort="${c}" style="color:inherit;text-decoration:none">${esc(label)}${arrow}</a></th>`;
-      }).join('') + '<th style="width:120px">Actions</th></tr>';
+      }).join('') + `<th style="width:120px">${T('table_header_actions')}</th></tr>`;
 
       // Rows
       const editableCols = new Set(meta?.list_editable || []);
       if (!data.items.length) {
-        tableEl.innerHTML = `<tr><td colspan="99" style="color:#586069">No records found.</td></tr>`;
+        tableEl.innerHTML = `<tr><td colspan="99" style="color:#586069">${T('error_no_records')}</td></tr>`;
       } else {
         tableEl.innerHTML = data.items.map(item => {
           const id = item.id || '';
           const isChecked = selected.has(id) ? ' checked' : '';
           const checkTd = hasBulkActions
-            ? `<td><input type="checkbox" class="row-check" data-id="${id}" aria-label="Select row"${isChecked}></td>`
+            ? `<td><input type="checkbox" class="row-check" data-id="${id}" aria-label="${T('aria_select_row')}"${isChecked}></td>`
             : '';
           const cells = cols.map(c => {
             if (editableCols.has(c)) {
@@ -267,9 +382,9 @@ async function initList(model) {
             }
             return `<td>${fmtCell(item[c])}</td>`;
           }).join('');
-          const actions = `<td>
-            <a class="btn btn-sm btn-secondary" href="${UI_BASE}/${model}/${id}">View</a>
-            <a class="btn btn-sm btn-secondary" href="${UI_BASE}/${model}/${id}/edit">Edit</a>
+          const actions = `<td style="white-space:nowrap;width:1%;padding-right:.75rem">
+            <a class="btn btn-sm btn-icon" href="${UI_BASE}/${model}/${id}" title="${T('action_view')}" aria-label="${T('action_view')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></a>
+            <a class="btn btn-sm btn-icon" href="${UI_BASE}/${model}/${id}/edit" title="${T('action_edit')}" aria-label="${T('action_edit')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></a>
           </td>`;
           return `<tr>${checkTd}${cells}${actions}</tr>`;
         }).join('');
@@ -300,14 +415,14 @@ async function initList(model) {
             if (e.target.checked) selected.add(cb.dataset.id);
             else selected.delete(cb.dataset.id);
           });
-          updateActionBar();
+          updateSelectionUI();
         });
         tableEl.addEventListener('change', e => {
           const cb = e.target.closest('.row-check');
           if (!cb) return;
           if (cb.checked) selected.add(cb.dataset.id);
           else selected.delete(cb.dataset.id);
-          updateActionBar();
+          updateSelectionUI();
         });
       }
 
@@ -384,7 +499,7 @@ async function initDetail(model, objectId) {
       const matrixCard = document.createElement('div');
       matrixCard.className = 'card';
       matrixCard.style.marginTop = '1.25rem';
-      matrixCard.innerHTML = '<h3 style="font-size:.95rem;font-weight:600;margin-bottom:1rem">CRUD Permissions</h3><div id="permission-matrix-body"></div>';
+      matrixCard.innerHTML = `<h3 style="font-size:.95rem;font-weight:600;margin-bottom:1rem">${T('section_crud_permissions')}</h3><div id="permission-matrix-body"></div>`;
       const layoutEl = bodyEl.closest('.detail-layout') || bodyEl.parentElement;
       layoutEl.insertAdjacentElement('afterend', matrixCard);
       renderPermissionMatrix(objectId, document.getElementById('permission-matrix-body'));
@@ -399,7 +514,7 @@ async function initDetail(model, objectId) {
     try {
       const history = await API.get(`/audit?object_id=${encodeURIComponent(objectId)}&page_size=3`);
       if (!history.items.length) {
-        historyEl.innerHTML = '<p style="color:#586069;font-size:.82rem">No changes recorded yet.</p>';
+        historyEl.innerHTML = `<p style="color:#586069;font-size:.82rem">${T('error_no_changes')}</p>`;
       } else {
         const actionColor = { created: 'badge-green', updated: 'badge-gray', deleted: 'badge-red' };
         const truncate = (s, max = 80) => {
@@ -407,9 +522,9 @@ async function initDetail(model, objectId) {
           return str.length > max ? str.slice(0, max) + '…' : str;
         };
         const entries = history.items.map(e => {
-          const when = new Date(e.created_at).toLocaleString();
+          const when = fmtDate(e.created_at);
           const color = actionColor[e.action] || 'badge-gray';
-          const actor = e.actor || 'Unknown';
+          const actor = e.actor || T('label_unknown_actor');
           let detail = '';
           if (e.changes && Object.keys(e.changes).length) {
             detail = '<div class="history-changes">' +
@@ -432,18 +547,18 @@ async function initDetail(model, objectId) {
 
         const remaining = history.total - history.items.length;
         const moreLink = remaining > 0
-          ? `<a href="${UI_BASE}/audit_logs?q=${encodeURIComponent(objectId)}" style="font-size:.78rem;display:block;margin-top:.6rem;color:var(--link,#0052cc)">+${remaining} more — view all changes →</a>`
+          ? `<a href="${UI_BASE}/audit_logs?q=${encodeURIComponent(objectId)}" style="font-size:.78rem;display:block;margin-top:.6rem;color:var(--link,#0052cc)">${T('link_view_all_changes', {count: remaining})}</a>`
           : '';
         historyEl.innerHTML = entries + moreLink;
       }
     } catch (err) {
       console.error('History load failed:', err);
-      historyEl.innerHTML = `<p style="color:#586069;font-size:.82rem">History unavailable: ${esc(String(err))}</p>`;
+      historyEl.innerHTML = `<p style="color:#586069;font-size:.82rem">${T('error_history_unavailable')}: ${esc(String(err))}</p>`;
     }
   }
 
   setBreadcrumb([
-    { label: 'Home', href: UI_BASE + '/dashboard' },
+    { label: T('nav_home'), href: UI_BASE + '/dashboard' },
     { label: meta?.label_plural || model, href: `${UI_BASE}/${model}` },
     { label: objectId, href: '' },
   ]);
@@ -460,7 +575,7 @@ async function initCreate(model) {
 
   try {
     meta = await API.get(`/admin/${model}/meta`);
-    document.getElementById('page-title').textContent = `New ${meta.label || model}`;
+    document.getElementById('page-title').textContent = T('page_title_new', {label: meta.label || model});
     const backLink = document.getElementById('back-link');
     if (backLink) backLink.href = `${UI_BASE}/${model}`;
 
@@ -469,14 +584,14 @@ async function initCreate(model) {
     );
 
     if (!writableFields.length) {
-      formEl.innerHTML = '<div class="fallback-notice">No editable fields available for this model.</div>';
+      formEl.innerHTML = `<div class="fallback-notice">${T('error_no_editable_fields')}</div>`;
       return;
     }
 
     // Rebuild form content — always include the submit button
     formEl.innerHTML =
       writableFields.map(f => buildFieldInput(f)).join('') +
-      '<div style="margin-top:1rem"><button type="submit" class="btn btn-primary">Create</button></div>';
+      `<div style="margin-top:1rem"><button type="submit" class="btn btn-primary">${T('action_create')}</button></div>`;
 
     populateRelationSelects(formEl);
 
@@ -501,9 +616,9 @@ async function initCreate(model) {
   }
 
   setBreadcrumb([
-    { label: 'Home', href: UI_BASE + '/dashboard' },
+    { label: T('nav_home'), href: UI_BASE + '/dashboard' },
     { label: meta?.label_plural || model, href: `${UI_BASE}/${model}` },
-    { label: 'New', href: '' },
+    { label: T('nav_new'), href: '' },
   ]);
   await initNav(model);
 }
@@ -522,7 +637,7 @@ async function initUpdate(model, objectId) {
       API.get(`/admin/${model}/${objectId}`),
     ]);
 
-    document.getElementById('page-title').textContent = `Edit ${meta.label || model}`;
+    document.getElementById('page-title').textContent = T('page_title_edit', {label: meta.label || model});
     const backLink = document.getElementById('back-link');
     if (backLink) backLink.href = `${UI_BASE}/${model}/${objectId}`;
 
@@ -531,13 +646,13 @@ async function initUpdate(model, objectId) {
     );
 
     if (!editableFields.length) {
-      formEl.innerHTML = '<div class="fallback-notice">No editable fields available for this model.</div>';
+      formEl.innerHTML = `<div class="fallback-notice">${T('error_no_editable_fields')}</div>`;
       return;
     }
 
     formEl.innerHTML =
       editableFields.map(f => buildFieldInput(f, item[f.name])).join('') +
-      '<div style="margin-top:1rem"><button type="submit" class="btn btn-primary">Save</button></div>';
+      `<div style="margin-top:1rem"><button type="submit" class="btn btn-primary">${T('action_save')}</button></div>`;
 
     populateRelationSelects(formEl);
 
@@ -547,7 +662,7 @@ async function initUpdate(model, objectId) {
       const body = collectForm(formEl, writableFields);
       try {
         const updated = await API.patch(`/admin/${model}/${objectId}`, body);
-        showSuccess('Saved successfully.');
+        showSuccess(T('status_saved'));
         editableFields.forEach(f => {
           const el = formEl.querySelector(`[name="${f.name}"]`);
           if (el && updated[f.name] !== undefined) el.value = updated[f.name] ?? '';
@@ -562,7 +677,7 @@ async function initUpdate(model, objectId) {
       const matrixCard = document.createElement('div');
       matrixCard.className = 'card';
       matrixCard.style.marginTop = '1.25rem';
-      matrixCard.innerHTML = '<h3 style="font-size:.95rem;font-weight:600;margin-bottom:1rem">CRUD Permissions</h3><div id="permission-matrix-body"></div>';
+      matrixCard.innerHTML = `<h3 style="font-size:.95rem;font-weight:600;margin-bottom:1rem">${T('section_crud_permissions')}</h3><div id="permission-matrix-body"></div>`;
       formEl.parentElement.insertAdjacentElement('afterend', matrixCard);
       renderPermissionMatrix(objectId, document.getElementById('permission-matrix-body'));
     }
@@ -571,10 +686,10 @@ async function initUpdate(model, objectId) {
   }
 
   setBreadcrumb([
-    { label: 'Home', href: UI_BASE + '/dashboard' },
+    { label: T('nav_home'), href: UI_BASE + '/dashboard' },
     { label: meta?.label_plural || model, href: `${UI_BASE}/${model}` },
     { label: objectId, href: `${UI_BASE}/${model}/${objectId}` },
-    { label: 'Edit', href: '' },
+    { label: T('nav_edit'), href: '' },
   ]);
   await initNav(model);
 }
@@ -627,7 +742,7 @@ function buildFieldInput(f, value) {
     input = `<input type="${itype}" name="${f.name}" id="f_${f.name}" value="${esc(String(val))}"${roAttr}>`;
   }
 
-  const hint = isReadonly ? '<p class="field-hint">Read-only</p>' : '';
+  const hint = isReadonly ? `<p class="field-hint">${T('label_readonly')}</p>` : '';
   return `<div class="form-group">
     <label for="f_${f.name}">${esc(f.label || f.name)}${req}</label>
     ${input}${hint}
@@ -669,14 +784,14 @@ async function populateRelationSelects(formEl) {
       const currentVal = sel.dataset.currentVal || '';
       try {
         const data = await API.get(lookupUrl + '?page_size=100');
-        sel.innerHTML = '<option value="">— Select —</option>' +
+        sel.innerHTML = `<option value="">${T('option_select')}</option>` +
           data.items.map(item =>
             `<option value="${esc(item.id)}"${item.id === currentVal ? ' selected' : ''}>${esc(item.label)}</option>`
           ).join('');
       } catch (_) {
         sel.innerHTML = currentVal
           ? `<option value="${esc(currentVal)}" selected>${esc(currentVal)}</option>`
-          : '<option value="">— None available —</option>';
+          : `<option value="">${T('option_none_available')}</option>`;
       }
     })());
   });
@@ -695,14 +810,14 @@ async function populateRelationSelects(formEl) {
         } else {
           opts = (data.items || []).map(m => ({ id: m.id, label: m.label || m.id }));
         }
-        sel.innerHTML = '<option value="">— Select model —</option>' +
+        sel.innerHTML = `<option value="">${T('option_select_model')}</option>` +
           opts.map(o =>
             `<option value="${esc(o.id)}"${o.id === currentVal ? ' selected' : ''}>${esc(o.label)}</option>`
           ).join('');
       } catch (_) {
         sel.innerHTML = currentVal
           ? `<option value="${esc(currentVal)}" selected>${esc(currentVal)}</option>`
-          : '<option value="">— None available —</option>';
+          : `<option value="">${T('option_none_available')}</option>`;
       }
     })());
   });
@@ -715,7 +830,7 @@ async function populateRelationSelects(formEl) {
 // ---------------------------------------------------------------------------
 function renderPagination(el, currentPage, totalPages, totalItems, onPage) {
   if (!el) return;
-  if (totalPages <= 1) { el.innerHTML = `<span>${totalItems} item${totalItems !== 1 ? 's' : ''}</span>`; return; }
+  if (totalPages <= 1) { el.innerHTML = `<span>${T(totalItems === 1 ? 'pagination_item' : 'pagination_items', {count: totalItems})}</span>`; return; }
 
   const prev = `<button ${currentPage <= 1 ? 'disabled' : ''} data-p="${currentPage - 1}">‹</button>`;
   const next = `<button ${currentPage >= totalPages ? 'disabled' : ''} data-p="${currentPage + 1}">›</button>`;
@@ -730,7 +845,7 @@ function renderPagination(el, currentPage, totalPages, totalItems, onPage) {
       : `<button class="${p === currentPage ? 'active' : ''}" data-p="${p}">${p}</button>`)
     .join('');
 
-  el.innerHTML = prev + pages + next + `<span style="margin-left:.5rem;color:#586069">${totalItems} total</span>`;
+  el.innerHTML = prev + pages + next + `<span style="margin-left:.5rem;color:#586069">${T('pagination_total', {count: totalItems})}</span>`;
   el.querySelectorAll('button[data-p]').forEach(btn => {
     btn.addEventListener('click', () => onPage(+btn.dataset.p));
   });
@@ -744,12 +859,77 @@ function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+function applyStrftime(pattern, d) {
+  const pad = (n, w = 2) => String(n).padStart(w, '0');
+  const h12 = d.getHours() % 12 || 12;
+  const offset = -d.getTimezoneOffset();
+  const offSign = offset >= 0 ? '+' : '-';
+  const offH = pad(Math.floor(Math.abs(offset) / 60));
+  const offM = pad(Math.abs(offset) % 60);
+  let tzAbbr = `UTC${offSign}${offH}:${offM}`;
+  try {
+    tzAbbr = new Intl.DateTimeFormat('en', { timeZoneName: 'short' })
+      .formatToParts(d).find(p => p.type === 'timeZoneName')?.value || tzAbbr;
+  } catch {}
+  return pattern
+    .replace('%Y', d.getFullYear())
+    .replace('%y', pad(d.getFullYear() % 100))
+    .replace('%m', pad(d.getMonth() + 1))
+    .replace('%d', pad(d.getDate()))
+    .replace('%H', pad(d.getHours()))
+    .replace('%I', pad(h12))
+    .replace('%M', pad(d.getMinutes()))
+    .replace('%S', pad(d.getSeconds()))
+    .replace('%p', d.getHours() < 12 ? 'AM' : 'PM')
+    .replace('%z', `UTC${offSign}${offH}:${offM}`)
+    .replace('%Z', tzAbbr);
+}
+
+function fmtDate(val) {
+  if (!val) return '—';
+  const d = new Date(val);
+  if (isNaN(d)) return String(val);
+  const pad = n => String(n).padStart(2, '0');
+  const fmt = Prefs.getDateFormat();
+  const showTz = Prefs.getShowTimezone();
+
+  if (fmt === 'custom') {
+    return applyStrftime(Prefs.getDatePattern() || '%Y-%m-%d %H:%M', d);
+  }
+
+  let tzSuffix = '';
+  if (showTz) {
+    try {
+      const abbr = new Intl.DateTimeFormat('en', { timeZoneName: 'short' })
+        .formatToParts(d).find(p => p.type === 'timeZoneName')?.value;
+      if (abbr) tzSuffix = ` (${abbr})`;
+    } catch {}
+  }
+
+  if (fmt === 'iso') {
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}${tzSuffix}`;
+  }
+  if (fmt === 'eu') {
+    return `${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}${tzSuffix}`;
+  }
+  if (fmt === 'us') {
+    return d.toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' }) + tzSuffix;
+  }
+  // locale: delegate timezone display to Intl directly
+  return showTz
+    ? d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short', timeZoneName: 'short' })
+    : d.toLocaleString();
+}
+
 function fmtCell(val) {
   if (val === null || val === undefined) return '<span style="color:#aaa">—</span>';
   if (typeof val === 'boolean') {
     return val
       ? '<span class="badge badge-green">Yes</span>'
       : '<span class="badge badge-red">No</span>';
+  }
+  if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(val)) {
+    return esc(fmtDate(val));
   }
   return esc(String(val));
 }
@@ -789,6 +969,27 @@ const Prefs = {
   setPageSize(n) { this.set({page_size: String(n)}); },
   getTheme() { return this.get().theme || 'auto'; },
   setTheme(t) { this.set({theme: t}); },
+  _ld() { return window.ADMIN_LOCALE_DEFAULTS || {}; },
+  _tl() { return window.ADMIN_TENANT_LOCALE || {}; },
+  getLanguage() {
+    return this.get().language || this._tl().language || this._ld().language
+      || (navigator.language || '').split('-')[0] || 'en';
+  },
+  setLanguage(l) { this.set({language: l}); },
+  getDateFormat() { return this.get().date_format || this._tl().date_format || this._ld().date_format || 'locale'; },
+  setDateFormat(f) { this.set({date_format: f}); },
+  getDatePattern() { return this.get().date_pattern || this._tl().date_pattern || this._ld().date_pattern || '%Y-%m-%d %H:%M'; },
+  setDatePattern(p) { this.set({date_pattern: p}); },
+  getShowTimezone() {
+    const p = this.get();
+    if ('show_timezone' in p) return p.show_timezone === true;
+    const tl = this._tl();
+    if ('show_timezone' in tl) return tl.show_timezone === true;
+    return this._ld().show_timezone === true;
+  },
+  setShowTimezone(v) { this.set({show_timezone: v}); },
+  getHomepage() { return this.get().homepage || 'dashboard'; },
+  setHomepage(v) { this.set({homepage: v}); },
   applyDensity() {
     const d = this.getDensity();
     if (d !== 'comfortable') document.body.dataset.density = d;
@@ -800,7 +1001,7 @@ const Prefs = {
 // ---------------------------------------------------------------------------
 async function initSettings() {
   if (!Auth.isLoggedIn()) { Auth.redirectToLogin(); return; }
-  setBreadcrumb([{ label: 'Settings' }]);
+  setBreadcrumb([{ label: T('nav_settings') }]);
   await initNav(null);
 
   // --- Profile ---
@@ -812,7 +1013,7 @@ async function initSettings() {
     if (nameEl) nameEl.value = me.full_name || '';
     if (emailEl) emailEl.value = me.email || '';
   } catch (e) {
-    showError('Failed to load profile.');
+    showError(T('error_profile_load_failed'));
   }
 
   document.getElementById('profile-form').addEventListener('submit', async (e) => {
@@ -834,9 +1035,9 @@ async function initSettings() {
       await API.patch('/admin/profile', body);
       document.getElementById('pf-cur-pw').value = '';
       document.getElementById('pf-new-pw').value = '';
-      showSuccess('Profile saved.');
+      showSuccess(T('status_profile_saved'));
     } catch (err) {
-      showError(fmtAPIError(err) || 'Save failed.');
+      showError(fmtAPIError(err) || T('error_save_failed'));
     } finally {
       btn.disabled = false;
     }
@@ -846,20 +1047,57 @@ async function initSettings() {
   const densityEl = document.getElementById('pref-density');
   const pageSizeEl = document.getElementById('pref-page-size');
   const themeEl = document.getElementById('pref-theme');
+  const dateFormatEl = document.getElementById('pref-date-format');
+  const datePatternEl = document.getElementById('pref-date-pattern');
+  const datePatternRow = document.getElementById('pref-date-pattern-row');
+  const showTzEl = document.getElementById('pref-show-timezone');
+  const langEl = document.getElementById('pref-language');
+  const homepageEl = document.getElementById('pref-homepage');
+
+  // Populate homepage dropdown with nav items
+  if (homepageEl) {
+    try {
+      const nav = await API.get('/admin/navigation');
+      const opts = nav.items.map(item =>
+        `<option value="${esc(item.model)}">${esc(item.label_plural)}</option>`
+      ).join('');
+      homepageEl.innerHTML =
+        `<option value="dashboard">${T('option_homepage_dashboard')}</option>` + opts;
+    } catch {
+      homepageEl.innerHTML = `<option value="dashboard">${T('option_homepage_dashboard')}</option>`;
+    }
+    homepageEl.value = Prefs.getHomepage();
+  }
 
   densityEl.value = Prefs.getDensity();
   pageSizeEl.value = String(Prefs.getPageSize());
   themeEl.value = Prefs.getTheme();
+  if (dateFormatEl) {
+    dateFormatEl.value = Prefs.getDateFormat();
+    if (datePatternEl) datePatternEl.value = Prefs.getDatePattern();
+    if (datePatternRow) datePatternRow.style.display = dateFormatEl.value === 'custom' ? '' : 'none';
+    dateFormatEl.addEventListener('change', () => {
+      if (datePatternRow) datePatternRow.style.display = dateFormatEl.value === 'custom' ? '' : 'none';
+    });
+  }
+  if (showTzEl) showTzEl.checked = Prefs.getShowTimezone();
+  if (langEl) langEl.value = Prefs.getLanguage();
 
   document.getElementById('prefs-save-btn').addEventListener('click', () => {
     Prefs.setDensity(densityEl.value);
     Prefs.setPageSize(parseInt(pageSizeEl.value, 10));
     Prefs.setTheme(themeEl.value);
+    if (dateFormatEl) Prefs.setDateFormat(dateFormatEl.value);
+    if (datePatternEl) Prefs.setDatePattern(datePatternEl.value.trim() || '%Y-%m-%d %H:%M');
+    if (showTzEl) Prefs.setShowTimezone(showTzEl.checked);
+    if (langEl) Prefs.setLanguage(langEl.value);
+    if (homepageEl) Prefs.setHomepage(homepageEl.value);
     const theme = themeEl.value === 'auto'
       ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
       : themeEl.value;
     DarkMode.apply(theme);
-    showToast('Preferences saved.', 'success');
+    applyI18n();
+    showToast(T('status_prefs_saved'), 'success');
   });
 }
 
@@ -921,7 +1159,7 @@ async function initBreakGlass(model, objectId) {
 
   try {
     const meta = await API.get(`/admin/${model}/meta`);
-    document.getElementById('page-title').textContent = `Break-glass Edit: ${meta.label || model}`;
+    document.getElementById('page-title').textContent = T('page_title_breakglass', {label: meta.label || model});
 
     // Only show non-protected, non-readonly fields as editable targets
     const editableFields = (meta.fields || []).filter(
@@ -929,9 +1167,9 @@ async function initBreakGlass(model, objectId) {
     );
 
     if (!editableFields.length) {
-      fieldsEl.innerHTML = '<div class="fallback-notice">No writable fields available for break-glass editing.</div>';
+      fieldsEl.innerHTML = `<div class="fallback-notice">${T('error_no_breakglass_fields')}</div>`;
     } else {
-      fieldsEl.innerHTML = '<p style="font-size:.85rem;color:#586069;margin-bottom:.75rem">Select fields to change:</p>' +
+      fieldsEl.innerHTML = `<p style="font-size:.85rem;color:#586069;margin-bottom:.75rem">${T('text_select_fields_to_change')}</p>` +
         editableFields.map(f => buildFieldInput(f)).join('');
     }
 
@@ -942,7 +1180,7 @@ async function initBreakGlass(model, objectId) {
       const reason = reasonEl ? reasonEl.value.trim() : '';
 
       if (reason.length < 10) {
-        if (reasonErrEl) { reasonErrEl.textContent = 'Reason must be at least 10 characters.'; reasonErrEl.style.display = 'block'; }
+        if (reasonErrEl) { reasonErrEl.textContent = T('error_reason_too_short'); reasonErrEl.style.display = 'block'; }
         reasonEl && reasonEl.focus();
         return;
       }
@@ -959,7 +1197,7 @@ async function initBreakGlass(model, objectId) {
       });
 
       if (!Object.keys(changes).length) {
-        showError('No fields to change. Fill in at least one field.');
+        showError(T('error_no_fields_changed'));
         return;
       }
 
@@ -991,9 +1229,9 @@ async function openInlineCreate(targetTable, selectId) {
   const panel = document.createElement('div');
   panel.style.cssText = 'background:var(--surface,#fff);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.25);padding:1.5rem;width:480px;max-width:95vw;max-height:80vh;overflow-y:auto;position:relative';
 
-  const closeBtn = `<button onclick="document.getElementById('inline-create-modal').remove()" style="position:absolute;top:.75rem;right:.75rem;background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--text-muted,#586069)" aria-label="Close">✕</button>`;
+  const closeBtn = `<button onclick="document.getElementById('inline-create-modal').remove()" style="position:absolute;top:.75rem;right:.75rem;background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--text-muted,#586069)" aria-label="${T('aria_close')}">✕</button>`;
 
-  panel.innerHTML = closeBtn + `<h3 style="font-size:1rem;margin-bottom:1rem">New ${targetTable}</h3><div id="inline-form-wrap"><p class="loading">Loading…</p></div>`;
+  panel.innerHTML = closeBtn + `<h3 style="font-size:1rem;margin-bottom:1rem">${T('modal_new_title', {table: targetTable})}</h3><div id="inline-form-wrap"><p class="loading">${T('status_loading')}</p></div>`;
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
 
@@ -1011,8 +1249,8 @@ async function openInlineCreate(targetTable, selectId) {
     form.innerHTML =
       writableFields.map(f => buildFieldInput(f)).join('') +
       '<div style="margin-top:1rem;display:flex;gap:.5rem">' +
-        '<button type="submit" class="btn btn-primary">Create</button>' +
-        '<button type="button" class="btn btn-secondary" onclick="document.getElementById(\'inline-create-modal\').remove()">Cancel</button>' +
+        `<button type="submit" class="btn btn-primary">${T('action_create')}</button>` +
+        `<button type="button" class="btn btn-secondary" onclick="document.getElementById('inline-create-modal').remove()">${T('action_cancel')}</button>` +
       '</div>';
     wrapEl.innerHTML = '';
     wrapEl.appendChild(form);
@@ -1045,16 +1283,19 @@ async function openInlineCreate(targetTable, selectId) {
 // 4B: Permission matrix section for role-like models
 // ---------------------------------------------------------------------------
 async function renderPermissionMatrix(objectId, containerEl) {
-  containerEl.innerHTML = '<p class="loading">Loading permissions…</p>';
+  containerEl.innerHTML = `<p class="loading">${T('status_loading_permissions')}</p>`;
   try {
     const matrix = await API.get(`/admin/permission-matrix/${objectId}`);
 
     const ops = ['can_list', 'can_create', 'can_update', 'can_delete'];
-    const opLabels = { can_list: 'List', can_create: 'Create', can_update: 'Update', can_delete: 'Delete' };
+    const opLabels = {
+      can_list: T('table_header_list'), can_create: T('table_header_create'),
+      can_update: T('table_header_update'), can_delete: T('table_header_delete'),
+    };
 
-    const thead = '<thead><tr><th>Model</th>' + ops.map(o => `<th style="text-align:center">${opLabels[o]}</th>`).join('') + '</tr></thead>';
+    const thead = `<thead><tr><th>${T('table_header_model')}</th>` + ops.map(o => `<th style="text-align:center">${opLabels[o]}</th>`).join('') + '</tr></thead>';
     const tbody = matrix.map(row =>
-      `<tr><td style="font-weight:500">${esc(row.model_name)}</td>` +
+      `<tr><td style="font-weight:500">${esc(row.label || row.model_name)}</td>` +
       ops.map(op =>
         `<td style="text-align:center"><input type="checkbox" data-model="${esc(row.model_name)}" data-op="${esc(op)}"${row[op] ? ' checked' : ''}></td>`
       ).join('') +
@@ -1063,7 +1304,7 @@ async function renderPermissionMatrix(objectId, containerEl) {
 
     containerEl.innerHTML =
       `<table style="width:100%">${thead}<tbody>${tbody}</tbody></table>` +
-      `<button id="matrix-save" class="btn btn-primary" style="margin-top:1rem">Save Permissions</button>`;
+      `<button id="matrix-save" class="btn btn-primary" style="margin-top:1rem">${T('action_save_permissions')}</button>`;
 
     document.getElementById('matrix-save')?.addEventListener('click', async () => {
       const updated = matrix.map(row => {
@@ -1078,7 +1319,7 @@ async function renderPermissionMatrix(objectId, containerEl) {
         await API._fetch(`/admin/permission-matrix/${objectId}`, {
           method: 'PUT', body: JSON.stringify(updated),
         });
-        showSuccess('Permissions saved.');
+        showSuccess(T('status_permissions_saved'));
       } catch (err) {
         showError(fmtAPIError(err));
       }
@@ -1110,7 +1351,7 @@ const DarkMode = {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem(this.PREF_KEY, theme);
     const btn = document.getElementById('dark-mode-btn');
-    if (btn) btn.textContent = theme === 'dark' ? '☀ Light' : '☾ Dark';
+    if (btn) btn.textContent = theme === 'dark' ? T('btn_light_mode') : T('btn_dark_mode');
   },
   init() {
     const saved = localStorage.getItem(this.PREF_KEY);
@@ -1123,6 +1364,81 @@ const DarkMode = {
   },
 };
 DarkMode.init();
+document.addEventListener('DOMContentLoaded', applyI18n);
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+async function initDashboard() {
+  if (!Auth.isLoggedIn()) { Auth.redirectToLogin(); return; }
+
+  const hp = Prefs.getHomepage();
+  if (hp && hp !== 'dashboard') {
+    window.location.replace(`${UI_BASE}/${hp}`);
+    return;
+  }
+
+  await initNav(null);
+
+  const el = document.getElementById('dashboard-metrics');
+  if (!el) return;
+
+  function statCard(label, value, sub) {
+    return `<div class="dash-stat">
+      <div class="dash-stat-value">${esc(String(value))}</div>
+      <div class="dash-stat-label">${esc(label)}</div>
+      ${sub ? `<div class="dash-stat-sub">${esc(sub)}</div>` : ''}
+    </div>`;
+  }
+
+  function renderWidget(w) {
+    let inner = '';
+    if (w.type === 'counts') {
+      const rows = w.data.rows || [];
+      if (!rows.length) {
+        inner = `<p style="color:var(--text-muted,#586069);font-size:.875rem">No models registered.</p>`;
+      } else {
+        inner = `<table style="width:100%;font-size:.875rem">
+          <thead><tr>
+            <th style="text-align:left;padding:.35rem .5rem;border-bottom:2px solid var(--border,#e1e4e8);color:var(--text-muted,#586069)">Model</th>
+            <th style="text-align:right;padding:.35rem .5rem;border-bottom:2px solid var(--border,#e1e4e8);color:var(--text-muted,#586069)">Records</th>
+          </tr></thead>
+          <tbody>${rows.map(r =>
+            `<tr>
+              <td style="padding:.35rem .5rem;border-bottom:1px solid var(--border,#f0f0f0)">
+                <a href="${UI_BASE}/${esc(r.model)}" style="color:var(--link,#0052cc);text-decoration:none">${esc(r.label)}</a>
+              </td>
+              <td style="padding:.35rem .5rem;border-bottom:1px solid var(--border,#f0f0f0);text-align:right;font-variant-numeric:tabular-nums">${r.count}</td>
+            </tr>`
+          ).join('')}</tbody>
+        </table>`;
+      }
+    } else {
+      // stats type
+      const stats = w.data.stats || [];
+      inner = `<div class="dash-stats">${stats.map(s => statCard(s.label, s.value, s.sub)).join('')}</div>`;
+      const clientStats = w.data.client_stats || [];
+      if (clientStats.length) {
+        inner += `<div class="dash-section"><h3 class="dash-section-title">Client types</h3>
+          <div class="dash-stats">${clientStats.map(s => statCard(s.label, s.value)).join('')}</div>
+        </div>`;
+      }
+    }
+    return `<div class="dash-widget card">
+      <h2 class="dash-widget-title">${esc(w.title)}</h2>
+      ${inner}
+    </div>`;
+  }
+
+  try {
+    const { widgets } = await API.get('/admin/dashboard');
+    el.innerHTML = widgets.length
+      ? widgets.map(renderWidget).join('')
+      : `<p style="color:var(--text-muted,#586069);font-size:.875rem">No dashboard widgets configured.</p>`;
+  } catch {
+    el.innerHTML = `<p style="color:var(--text-muted,#586069);font-size:.875rem">Dashboard unavailable.</p>`;
+  }
+}
 
 // Expose globally
-window.AdminUI = { Auth, API, Prefs, DarkMode, initNav, initList, initDetail, initCreate, initUpdate, initConfirmDelete, initBreakGlass, initSettings, openInlineCreate, showToast, showError, showSuccess };
+window.AdminUI = { Auth, API, Prefs, DarkMode, T, applyI18n, initNav, initList, initDetail, initCreate, initUpdate, initConfirmDelete, initBreakGlass, initSettings, initDashboard, openInlineCreate, showToast, showError, showSuccess };

@@ -67,7 +67,24 @@
       "PowerShell(Get-ChildItem -Path \"f:\\\\08_Projekte\\\\WebApps\\\\coreAdmin\\\\coreAdmin\\\\adminfoundry\\\\templates\\\\admin\" -File | ForEach-Object { $_.FullName })",
       "PowerShell(Get-ChildItem -Path \"f:\\\\08_Projekte\\\\WebApps\\\\coreAdmin\\\\coreAdmin\\\\adminfoundry\\\\static\\\\admin\" -Recurse -File | ForEach-Object { $_.FullName })",
       "Bash(python -m pytest tests/test_users.py -q --tb=short)",
-      "Bash(python -m pytest tests/test_admin_contract.py::test_contract_snapshot_role_admin -q --tb=short)"
+      "Bash(python -m pytest tests/test_admin_contract.py::test_contract_snapshot_role_admin -q --tb=short)",
+      "Bash(python -c \"from adminfoundry import create_coreadmin, CoreAdminConfig, ModelAdmin, admin_site, AuthProvider, __version__; print\\(__version__\\)\")",
+      "Bash(python -m uvicorn examples.blog.app:app --reload --port 8000)",
+      "Bash(Start-Sleep -Seconds 3)",
+      "Bash(Get-Content \"C:\\\\Users\\\\arnew\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\f--08-Projekte-WebApps-coreAdmin-coreAdmin\\\\1b7aefa5-4636-4393-bc77-abb54aec817a\\\\tasks\\\\b4d5w8s96.output\" -Tail 15)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8000/health\" -TimeoutSec 5)",
+      "PowerShell($r = Invoke-WebRequest -Uri \"http://localhost:8000/health\" -UseBasicParsing; \"$\\($r.StatusCode\\) $\\($r.Content\\)\")",
+      "Bash(python -c \"from zoneinfo import ZoneInfo; from datetime import datetime, timezone; d = datetime\\(2026,5,9,10,43,52,tzinfo=timezone.utc\\); print\\(d.astimezone\\(ZoneInfo\\('Europe/Berlin'\\)\\)\\)\")",
+      "Bash(Get-ChildItem -Recurse -Path \"f:\\\\08_Projekte\\\\WebApps\\\\coreAdmin\\\\coreAdmin\" -Force)",
+      "Bash(Select-Object -First 50)",
+      "Bash(Format-Table FullName)",
+      "Bash(python3)",
+      "Read(//tmp/**)",
+      "Bash(grep -E '^[a-z][a-z0-9_\\\\-]*$')",
+      "Bash(cat)",
+      "Bash(python3 /tmp/check_imports.py)",
+      "Bash(Remove-Item \"f:\\\\08_Projekte\\\\WebApps\\\\coreAdmin\\\\coreAdmin\\\\examples\\\\blog\\\\blog.db\" -ErrorAction SilentlyContinue)",
+      "Bash(Write-Host \"done\")"
     ],
     "additionalDirectories": [
       "f:\\08_Projekte\\WebApps\\coreAdmin\\coreAdmin\\.claude\\projects\\f--08-Projekte-WebApps-coreAdmin-coreAdmin\\memory"

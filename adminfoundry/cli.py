@@ -11,12 +11,29 @@ from adminfoundry.settings import settings
 
 app = typer.Typer(help="coreAdmin management commands.")
 db_app = typer.Typer(help="Database management commands.")
+migrate_app = typer.Typer(help="Migration commands (Alembic wrapper).")
 extensions_app = typer.Typer(help="Extension management commands.")
 tenant_app = typer.Typer(help="Tenant management commands.")
 
 app.add_typer(db_app, name="db")
+app.add_typer(migrate_app, name="migrate")
 app.add_typer(extensions_app, name="extensions")
 app.add_typer(tenant_app, name="tenant")
+
+# Load plugin commands registered via entry_points group "adminfoundry.commands"
+def _load_plugin_commands() -> None:
+    try:
+        from importlib.metadata import entry_points
+        for ep in entry_points(group="adminfoundry.commands"):
+            try:
+                fn = ep.load()
+                app.command(ep.name)(fn)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+_load_plugin_commands()
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +211,93 @@ async def _doctor():
     else:
         typer.echo("doctor: some checks failed.", err=True)
         raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# migrate sub-commands (Alembic wrapper)
+# ---------------------------------------------------------------------------
+
+@migrate_app.command("generate")
+def migrate_generate(
+    message: str = typer.Option("auto", "-m", "--message", help="Migration message"),
+    env: str = typer.Option("shared", help="Migration environment: shared or tenant"),
+):
+    """Auto-generate a new Alembic migration from model changes."""
+    ini = "alembic_shared.ini" if env == "shared" else "alembic_tenant.ini"
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", ini, "revision", "--autogenerate", "-m", message],
+    )
+    raise typer.Exit(code=result.returncode)
+
+
+@migrate_app.command("apply")
+def migrate_apply(
+    env: str = typer.Option("shared", help="Migration environment: shared or tenant"),
+    revision: str = typer.Option("head", help="Target revision (default: head)"),
+):
+    """Apply pending migrations (upgrade to head by default)."""
+    ini = "alembic_shared.ini" if env == "shared" else "alembic_tenant.ini"
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", ini, "upgrade", revision],
+    )
+    raise typer.Exit(code=result.returncode)
+
+
+@migrate_app.command("status")
+def migrate_status(
+    env: str = typer.Option("shared", help="Migration environment: shared or tenant"),
+):
+    """Show current migration revision and pending migrations."""
+    ini = "alembic_shared.ini" if env == "shared" else "alembic_tenant.ini"
+    subprocess.run([sys.executable, "-m", "alembic", "-c", ini, "current"])
+    subprocess.run([sys.executable, "-m", "alembic", "-c", ini, "heads"])
+
+
+# ---------------------------------------------------------------------------
+# loaddata / dumpdata commands
+# ---------------------------------------------------------------------------
+
+@app.command("loaddata")
+def loaddata(
+    fixture: str = typer.Argument(..., help="Path to fixture file (.json or .yaml)"),
+):
+    """Load fixture data into the database from a JSON or YAML file."""
+    asyncio.run(_loaddata(fixture))
+
+
+async def _loaddata(fixture: str) -> None:
+    from adminfoundry.database import AsyncSessionLocal
+    from adminfoundry.fixtures import load_fixture
+
+    async with AsyncSessionLocal() as session:
+        try:
+            count = await load_fixture(fixture, session)
+            typer.echo(f"Loaded {count} object(s) from {fixture}.")
+        except Exception as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(code=1)
+
+
+@app.command("dumpdata")
+def dumpdata(
+    model: str = typer.Argument(..., help="Registered model name (e.g. 'post')"),
+    output: str = typer.Option("fixture.json", "-o", "--output", help="Output file path"),
+):
+    """Dump all records of a model to a JSON fixture file."""
+    asyncio.run(_dumpdata(model, output))
+
+
+async def _dumpdata(model_name: str, output: str) -> None:
+    from adminfoundry.database import AsyncSessionLocal
+    from adminfoundry.fixtures import dump_fixture
+
+    async with AsyncSessionLocal() as session:
+        try:
+            count = await dump_fixture(model_name, session, output)
+            typer.echo(f"Dumped {count} object(s) to {output}.")
+        except Exception as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(code=1)
 
 
 # ---------------------------------------------------------------------------

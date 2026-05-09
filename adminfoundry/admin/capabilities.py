@@ -8,6 +8,7 @@ from adminfoundry.schemas.capabilities import (
     CapabilitiesResponse,
     ModelCapabilities,
     TenantContext,
+    TenantLocale,
 )
 
 
@@ -66,6 +67,12 @@ def build_admin_context(user, token_payload: dict, request) -> AdminContextRespo
             id=str(tenant.id),
             name=tenant.name,
             slug=tenant.slug,
+            locale=TenantLocale(
+                timezone=getattr(tenant, "timezone", None),
+                language=getattr(tenant, "language", None),
+                date_format=getattr(tenant, "date_format", None),
+                date_pattern=getattr(tenant, "date_pattern", None),
+            ),
         ) if tenant else None,
         enabled_features=enabled_features,
     )
