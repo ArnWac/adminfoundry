@@ -209,20 +209,6 @@ add_catalog("nl", {"welcome": "Welkom, {name}!"})
 
 ---
 
-## Fixtures
-
-```python
-from adminfoundry.fixtures import load_fixture, dump_fixture
-
-# Load from JSON or YAML
-await load_fixture("fixtures/initial.json", session)
-
-# Dump to file
-await dump_fixture("post", session, "fixtures/posts.json")
-```
-
----
-
 ## Pluggable auth
 
 ```python
@@ -297,8 +283,6 @@ adminfoundry inspect-registry       # list registered models
 adminfoundry migrate generate <msg> # generate an Alembic migration
 adminfoundry migrate apply          # apply pending migrations
 adminfoundry migrate status         # show current migration state
-adminfoundry loaddata fixtures.json # load fixture data
-adminfoundry dumpdata <model>       # dump model data to JSON
 ```
 
 Plugin commands are registered via entry points:

@@ -254,53 +254,6 @@ def migrate_status(
 
 
 # ---------------------------------------------------------------------------
-# loaddata / dumpdata commands
-# ---------------------------------------------------------------------------
-
-@app.command("loaddata")
-def loaddata(
-    fixture: str = typer.Argument(..., help="Path to fixture file (.json or .yaml)"),
-):
-    """Load fixture data into the database from a JSON or YAML file."""
-    asyncio.run(_loaddata(fixture))
-
-
-async def _loaddata(fixture: str) -> None:
-    from adminfoundry.database import AsyncSessionLocal
-    from adminfoundry.fixtures import load_fixture
-
-    async with AsyncSessionLocal() as session:
-        try:
-            count = await load_fixture(fixture, session)
-            typer.echo(f"Loaded {count} object(s) from {fixture}.")
-        except Exception as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            raise typer.Exit(code=1)
-
-
-@app.command("dumpdata")
-def dumpdata(
-    model: str = typer.Argument(..., help="Registered model name (e.g. 'post')"),
-    output: str = typer.Option("fixture.json", "-o", "--output", help="Output file path"),
-):
-    """Dump all records of a model to a JSON fixture file."""
-    asyncio.run(_dumpdata(model, output))
-
-
-async def _dumpdata(model_name: str, output: str) -> None:
-    from adminfoundry.database import AsyncSessionLocal
-    from adminfoundry.fixtures import dump_fixture
-
-    async with AsyncSessionLocal() as session:
-        try:
-            count = await dump_fixture(model_name, session, output)
-            typer.echo(f"Dumped {count} object(s) to {output}.")
-        except Exception as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            raise typer.Exit(code=1)
-
-
-# ---------------------------------------------------------------------------
 # db sub-commands
 # ---------------------------------------------------------------------------
 
