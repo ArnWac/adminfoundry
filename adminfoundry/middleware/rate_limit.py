@@ -5,9 +5,11 @@ from starlette.responses import JSONResponse
 
 # {path_prefix: (max_requests, window_seconds, http_method_or_None)}
 _LIMITS: dict[str, tuple[int, int, str | None]] = {
-    "/api/v1/auth/login":   (10,  60,   None),
-    "/api/v1/auth/refresh": (30,  60,   None),
-    "/api/v1/tenants":      (5,  3600, "POST"),
+    "/api/v1/auth/login":                    (10,  60,   None),
+    "/api/v1/auth/refresh":                  (30,  60,   None),
+    "/api/v1/auth/2fa/verify":               (5,   300,  None),  # 5 attempts per 5 min
+    "/api/v1/auth/password-reset/request":   (3,   3600, None),  # 3 per hour
+    "/api/v1/tenants":                       (5,   3600, "POST"),
 }
 
 # Fallback in-memory store (single-process only)

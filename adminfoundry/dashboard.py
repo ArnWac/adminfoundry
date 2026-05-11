@@ -54,9 +54,17 @@ class ModelCountsWidget(DashboardWidget):
         tenant = getattr(request.state, "tenant", None)
         rows = []
         for ma in admin_site.all():
+            # Match navigation visibility rules
+            if tenant is not None and not ma.tenant_scoped:
+                continue  # hide global models in tenant dashboard
+            if tenant is None and ma.tenant_scoped and not getattr(ma, "global_only_in_root_panel", False):
+                continue  # hide pure tenant models in root dashboard
             stmt = select(sa_func.count()).select_from(ma.model)
-            if ma.tenant_scoped and tenant and hasattr(ma.model, "tenant_id"):
-                stmt = stmt.where(ma.model.tenant_id == tenant.id)
+            if ma.tenant_scoped and hasattr(ma.model, "tenant_id"):
+                if tenant:
+                    stmt = stmt.where(ma.model.tenant_id == tenant.id)
+                elif getattr(ma, "global_only_in_root_panel", False):
+                    stmt = stmt.where(ma.model.tenant_id.is_(None))
             count = await db.scalar(stmt) or 0
             rows.append({"model": ma.model_name, "label": ma.label_plural, "count": count})
         return {"rows": rows}

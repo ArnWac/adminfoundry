@@ -55,6 +55,12 @@ class AuthProvider:
                 detail="User not found or inactive",
             )
 
+        if payload.get("tkv", 0) != user.token_version:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been invalidated — please log in again",
+            )
+
         request.state.audit_user_id = str(user.id)
         return user
 

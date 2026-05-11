@@ -471,10 +471,13 @@ async def create_object(
 @router.get("/{model_name}/meta")
 async def model_meta(
     model_name: str,
-    _: User = Depends(require_superadmin),
+    request: Request,
+    current_user: User = Depends(get_current_user),
 ):
     """Return full field and action contract metadata for a registered model."""
     model_admin = _get_admin_or_404(model_name)
+    payload = getattr(request.state, "token_payload", {})
+    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
     return build_model_contract(model_admin, registry=admin_site)
 
 

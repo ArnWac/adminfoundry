@@ -129,13 +129,13 @@ class AuditLogAdmin(ModelAdmin):
     ordering = ["-created_at"]
     readonly_fields = ["id", "created_at", "updated_at", "method", "path", "status_code",
                        "user_id", "tenant_id", "action", "object_id", "actor", "changes"]
-    tenant_scoped = True
-    global_only_in_root_panel = True
+    tenant_scoped = False  # B2C: audit logs are superadmin-only, not visible to tenants
     actions = []
 
 
 admin_site.register(UserAdmin())
 admin_site.register(RoleAdmin())
+admin_site.register(RolePermissionAdmin())
 admin_site.register(AuditLogAdmin())
 if settings.MULTI_TENANT:
     admin_site.register(TenantAdmin())

@@ -209,8 +209,9 @@ def test_superadmin_sees_all_models_in_navigation():
 
     model_names = [item.model for item in nav.items]
     assert "users" in model_names
-    # roles is tenant_scoped=True — hidden in root panel (no tenant context)
-    assert "roles" not in model_names
+    # roles has global_only_in_root_panel=True — shown in root panel with NULL tenant filter
+    assert "roles" in model_names
+    assert "role_permissions" in model_names
 
 
 def test_impersonation_token_sees_empty_navigation():
@@ -328,8 +329,9 @@ async def test_admin_navigation_endpoint(client: AsyncClient, superadmin: User):
     items = resp.json()["items"]
     model_names = [i["model"] for i in items]
     assert "users" in model_names
-    # roles is tenant_scoped=True — not shown in root panel
-    assert "roles" not in model_names
+    # roles / role_permissions have global_only_in_root_panel=True — shown in root panel
+    assert "roles" in model_names
+    assert "role_permissions" in model_names
     # Each item has required fields
     for item in items:
         assert "label" in item

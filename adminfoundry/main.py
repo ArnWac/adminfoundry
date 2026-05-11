@@ -9,7 +9,7 @@ from adminfoundry.settings import settings
 from adminfoundry.core.config import CoreAdminConfig
 from adminfoundry.routers import auth, health, users, roles, tenants
 from adminfoundry.middleware.errors import validation_exception_handler, UnhandledExceptionMiddleware
-from adminfoundry.middleware.logging import RequestLoggingMiddleware
+from adminfoundry.middleware.logging import RequestLoggingMiddleware, configure_json_logging
 from adminfoundry.middleware.tenant import TenantMiddleware
 from adminfoundry.middleware.security_headers import SecurityHeadersMiddleware
 from adminfoundry.middleware.rate_limit import RateLimitMiddleware
@@ -20,16 +20,21 @@ import adminfoundry.admin_config  # noqa: F401 — trigger admin registrations
 
 config = CoreAdminConfig.from_settings(settings)
 
+if settings.LOG_JSON:
+    configure_json_logging()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(periodic_cleanup())
-    yield
-    task.cancel()
     try:
-        await task
-    except asyncio.CancelledError:
-        pass
+        yield
+    finally:
+        task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
 
 
 app = FastAPI(title="coreAdmin API", lifespan=lifespan)

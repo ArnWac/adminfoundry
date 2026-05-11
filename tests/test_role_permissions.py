@@ -191,10 +191,10 @@ async def test_capabilities_endpoint_reflects_role_permissions(
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_role_permissions_not_in_admin_registry(
+async def test_role_permissions_in_admin_registry(
     client: AsyncClient, superadmin: User
 ):
     resp = await client.get("/api/v1/admin", headers=auth(superadmin))
     assert resp.status_code == 200
     models = [m["model"] for m in resp.json()["models"]]
-    assert "role_permissions" not in models
+    assert "role_permissions" in models

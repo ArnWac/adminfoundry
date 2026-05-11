@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 import uuid
@@ -5,6 +6,39 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 logger = logging.getLogger("adminfoundry.access")
+
+_JSON_SKIP = frozenset({
+    "msg", "args", "levelname", "levelno", "name", "filename", "module",
+    "exc_info", "exc_text", "stack_info", "lineno", "funcName", "created",
+    "msecs", "relativeCreated", "thread", "threadName", "processName",
+    "process", "message", "taskName", "pathname",
+})
+
+
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        record.message = record.getMessage()
+        log: dict = {
+            "time": self.formatTime(record, "%Y-%m-%dT%H:%M:%SZ"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.message,
+        }
+        for k, v in record.__dict__.items():
+            if k not in _JSON_SKIP and not k.startswith("_"):
+                log[k] = v
+        if record.exc_info:
+            log["exc"] = self.formatException(record.exc_info)
+        return json.dumps(log, default=str)
+
+
+def configure_json_logging() -> None:
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter())
+    root = logging.getLogger()
+    root.handlers = [handler]
+    if not root.level:
+        root.setLevel(logging.INFO)
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):

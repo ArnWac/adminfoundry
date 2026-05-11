@@ -1,16 +1,22 @@
-import math
+import csv
+import io
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
+
 from adminfoundry.database import get_db
 from adminfoundry.pagination import paginate
 from adminfoundry.dependencies import require_superadmin
+from adminfoundry.models.audit_log import AuditLog
 from adminfoundry.models.user import User
+from adminfoundry.models.password_reset_token import PasswordResetToken
 from adminfoundry.auth import hash_password, verify_password
 from adminfoundry.dependencies import get_current_user
 from adminfoundry.schemas.common import PaginatedResponse
-from adminfoundry.schemas.user import UserPublic, UserCreate, UserUpdate, ProfileUpdate
+from adminfoundry.schemas.user import UserPublic, UserCreate, UserUpdate, ProfileUpdate, UserExportResponse, AuditLogExport, SelfEraseRequest
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
@@ -87,6 +93,47 @@ async def update_me(
     return current_user
 
 
+# ---------------------------------------------------------------------------
+# GDPR self-service (Art. 15 / 17 / 20 DSGVO) — must be before /{user_id} routes
+# ---------------------------------------------------------------------------
+
+@router.get("/me/export")
+async def export_my_data(
+    format: str = Query("json", pattern="^(json|csv)$"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Art. 15 / 20 DSGVO — machine-readable export of all personal data."""
+    return await _build_export(current_user, format, db)
+
+
+@router.post("/me/erase", status_code=status.HTTP_200_OK)
+async def self_erase(
+    body: SelfEraseRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Art. 17 DSGVO — self-service erasure with password confirmation."""
+    if not verify_password(body.password, current_user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incorrect password")
+
+    user_id = current_user.id
+    await db.execute(
+        update(AuditLog)
+        .where(AuditLog.user_id == user_id)
+        .values(user_id=None, actor="[deleted]")
+    )
+    from sqlalchemy import delete as _delete
+    await db.execute(_delete(PasswordResetToken).where(PasswordResetToken.user_id == user_id))
+    await db.delete(current_user)
+    await db.commit()
+    return {"status": "erased", "user_id": str(user_id)}
+
+
+# ---------------------------------------------------------------------------
+# Superadmin user management
+# ---------------------------------------------------------------------------
+
 @router.get("/{user_id}", response_model=UserPublic)
 async def get_user(
     user_id: uuid.UUID,
@@ -110,8 +157,12 @@ async def update_user(
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    for field, value in body.model_dump(exclude_none=True).items():
+    changes = body.model_dump(exclude_none=True)
+    privilege_changed = "is_active" in changes or "is_superadmin" in changes
+    for field, value in changes.items():
         setattr(user, field, value)
+    if privilege_changed:
+        user.token_version += 1
 
     await db.commit()
     await db.refresh(user)
@@ -119,14 +170,111 @@ async def update_user(
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(
+async def deactivate_user(
     user_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_superadmin),
 ):
-    """Soft-delete: sets is_active=False."""
+    """Deactivate (soft-delete). For full GDPR erasure use POST /{user_id}/erase."""
     user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     user.is_active = False
+    user.token_version += 1
     await db.commit()
+
+
+@router.get("/{user_id}/export")
+async def export_user_data(
+    user_id: uuid.UUID,
+    format: str = Query("json", pattern="^(json|csv)$"),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_superadmin),
+):
+    """Art. 15 DSGVO — full data export for a specific user (superadmin only)."""
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return await _build_export(user, format, db)
+
+
+@router.post("/{user_id}/erase", status_code=status.HTTP_200_OK)
+async def gdpr_erase_user(
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_superadmin),
+):
+    """Art. 17 DSGVO — irreversible erasure: anonymise audit logs, hard-delete user."""
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    # Anonymise audit log entries — preserve the log record but break personal link
+    await db.execute(
+        update(AuditLog)
+        .where(AuditLog.user_id == user_id)
+        .values(user_id=None, actor="[deleted]")
+    )
+
+    # Delete password reset tokens
+    await db.execute(
+        select(PasswordResetToken).where(PasswordResetToken.user_id == user_id)
+    )
+    from sqlalchemy import delete as _delete
+    await db.execute(_delete(PasswordResetToken).where(PasswordResetToken.user_id == user_id))
+
+    # Hard-delete the user (CASCADE removes user_roles rows)
+    await db.delete(user)
+    await db.commit()
+
+    return {"status": "erased", "user_id": str(user_id)}
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+async def _build_export(user: User, format: str, db: AsyncSession):
+    logs = (await db.execute(
+        select(AuditLog)
+        .where(AuditLog.user_id == user.id)
+        .order_by(AuditLog.created_at.desc())
+    )).scalars().all()
+
+    export = UserExportResponse(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        created_at=user.created_at,
+        roles=[r.name for r in (user.roles or [])],
+        audit_log=[AuditLogExport.model_validate(log) for log in logs],
+        exported_at=datetime.now(timezone.utc),
+    )
+
+    if format == "csv":
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["field", "value"])
+        writer.writerow(["id", str(export.id)])
+        writer.writerow(["email", export.email])
+        writer.writerow(["full_name", export.full_name or ""])
+        writer.writerow(["created_at", export.created_at.isoformat()])
+        writer.writerow(["roles", ", ".join(export.roles)])
+        writer.writerow([])
+        writer.writerow(["--- audit log ---"])
+        writer.writerow(["created_at", "action", "method", "path", "ip_address"])
+        for entry in export.audit_log:
+            writer.writerow([
+                entry.created_at.isoformat(),
+                entry.action or "",
+                entry.method,
+                entry.path,
+                entry.ip_address or "",
+            ])
+        return Response(
+            content=buf.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="user_{user.id}.csv"'},
+        )
+
+    return export

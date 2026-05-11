@@ -25,9 +25,9 @@ def _create_token(data: dict, expires_delta: timedelta, token_type: str) -> str:
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def create_access_token(user_id: str) -> str:
+def create_access_token(user_id: str, token_version: int = 0) -> str:
     return _create_token(
-        {"sub": user_id},
+        {"sub": user_id, "tkv": token_version},
         timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
         "access",
     )
@@ -60,11 +60,12 @@ def create_impersonation_token(target_user_id: str, superadmin_id: str, tenant_i
     return token, jti
 
 
-def create_access_token_with_iat(user_id: str) -> str:
+def create_access_token_with_iat(user_id: str, token_version: int = 0) -> str:
     """Access token that embeds iat explicitly for step-up age checks."""
     now = datetime.now(timezone.utc)
     payload = {
         "sub": user_id,
+        "tkv": token_version,
         "iat": int(now.timestamp()),
         "exp": now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
         "jti": str(uuid.uuid4()),
@@ -81,3 +82,8 @@ def decode_token(token: str, expected_type: str) -> dict | None:
         return payload
     except JWTError:
         return None
+
+
+def create_mfa_token(user_id: str) -> str:
+    """Short-lived token (5 min) issued after password-correct, before TOTP verified."""
+    return _create_token({"sub": user_id}, timedelta(minutes=5), "mfa")

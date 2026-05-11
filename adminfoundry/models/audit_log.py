@@ -28,3 +28,4 @@ class AuditLog(Base):
     object_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     actor: Mapped[str | None] = mapped_column(String(255), nullable=True)
     changes: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)  # IPv4/IPv6

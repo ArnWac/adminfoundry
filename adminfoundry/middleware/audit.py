@@ -34,6 +34,8 @@ class AuditMiddleware(BaseHTTPMiddleware):
 
             user_id_str = getattr(request.state, "audit_user_id", None)
             tenant = getattr(request.state, "tenant", None)
+            xff = request.headers.get("X-Forwarded-For")
+            ip = xff.split(",")[0].strip() if xff else (request.client.host if request.client else None)
             log_data = {
                 "method": request.method,
                 "path": str(request.url.path),
@@ -44,6 +46,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
                 "object_id": getattr(request.state, "audit_object_id", None),
                 "actor": getattr(request.state, "audit_actor", None),
                 "changes": getattr(request.state, "audit_changes", None),
+                "ip_address": ip,
             }
             audit_task = BackgroundTask(_write_audit, log_data)
             if response.background is None:

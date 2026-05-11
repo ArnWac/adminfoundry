@@ -8,6 +8,7 @@ from adminfoundry.database import get_db, get_or_create_tenant_engine
 from adminfoundry.pagination import paginate
 from adminfoundry.dependencies import require_superadmin
 from adminfoundry.models.tenant import Tenant
+from adminfoundry.models.role import Role
 from adminfoundry.models.user import User
 from adminfoundry.models.impersonation_log import ImpersonationLog
 from adminfoundry.schemas.common import PaginatedResponse
@@ -44,6 +45,17 @@ async def create_tenant(
 
     tenant = Tenant(name=body.name, slug=body.slug)
     db.add(tenant)
+    await db.flush()  # get tenant.id before commit
+
+    # Bootstrap a tenant_admin role scoped to this tenant.
+    # Holders of this role have full CRUD access to all tenant-scoped models
+    # without being a global superadmin (is_superadmin stays False).
+    db.add(Role(
+        name="tenant_admin",
+        tenant_id=tenant.id,
+        description="Full access within tenant",
+    ))
+
     await db.commit()
     await db.refresh(tenant)
     return tenant

@@ -20,6 +20,14 @@ class Settings(BaseSettings):
 
     REDIS_URL: str | None = None
 
+    # GDPR / compliance
+    AUDIT_LOG_RETENTION_DAYS: int = 90  # 0 = keep forever
+    PASSWORD_MIN_LENGTH: int = 8
+
+    # 2FA / TOTP
+    ENFORCE_2FA_FOR_SUPERADMIN: bool = False
+    TOTP_ISSUER: str = "adminfoundry"
+
     DEBUG: bool = False
     MULTI_TENANT: bool = False
     # "header" uses X-Tenant-Slug; "subdomain" extracts from the first hostname segment
@@ -33,6 +41,12 @@ class Settings(BaseSettings):
 
     # Step-up window: how recent a login must be for protected actions (minutes)
     STEP_UP_WINDOW_MINUTES: int = 15
+
+    # Account lockout after repeated login failures
+    LOGIN_MAX_FAILURES: int = 5
+    LOGIN_LOCKOUT_MINUTES: int = 15
+
+    LOG_JSON: bool = True
 
     # Email / Password-Reset
     EMAIL_HOST: str = ""

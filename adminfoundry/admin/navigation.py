@@ -19,8 +19,8 @@ def build_navigation(user, token_payload: dict, registry: Registry, tenant=None)
         for admin in registry.all():
             if tenant is not None and not admin.tenant_scoped:
                 continue  # hide global models in tenant context
-            if tenant is None and admin.tenant_scoped:
-                continue  # hide tenant-scoped models in root panel
+            if tenant is None and admin.tenant_scoped and not admin.global_only_in_root_panel:
+                continue  # hide pure tenant models in root panel; global_only_in_root_panel ones stay
             items.append(NavItem(
                 model=admin.model_name,
                 label=admin.display_label,

@@ -47,7 +47,7 @@ async def test_create_user(client: AsyncClient, superadmin: User):
 
 @pytest.mark.asyncio
 async def test_create_user_duplicate_email(client: AsyncClient, superadmin: User):
-    payload = {"email": "dup@example.com", "password": "pw123"}
+    payload = {"email": "dup@example.com", "password": "password123"}
     await client.post("/api/v1/users", headers=auth(superadmin), json=payload)
     resp = await client.post("/api/v1/users", headers=auth(superadmin), json=payload)
     assert resp.status_code == 409
@@ -113,7 +113,7 @@ async def test_update_me_name(client: AsyncClient, superadmin: User, db: AsyncSe
 async def test_update_me_wrong_password(client: AsyncClient, superadmin: User):
     resp = await client.patch(
         "/api/v1/users/me",
-        json={"current_password": "wrong", "new_password": "newpass"},
+        json={"current_password": "wrong", "new_password": "newpassword123"},
         headers=auth(superadmin),
     )
     assert resp.status_code == 400

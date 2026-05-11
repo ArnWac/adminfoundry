@@ -97,7 +97,10 @@
       "Bash(python -m pytest tests/test_admin_crud.py::test_cross_tenant_impersonation_rejected tests/test_admin_crud.py::test_superadmin_blocked_from_tenant_scoped_in_root_panel tests/test_admin_crud.py::test_tenant_admin_access_in_correct_tenant tests/test_admin_crud.py::test_tenant_admin_blocked_from_wrong_tenant tests/test_admin_contract.py::test_impersonating_superadmin_sees_only_tenant_scoped_in_nav tests/test_admin_contract.py::test_tenant_admin_user_sees_all_tenant_scoped_in_nav tests/test_admin_contract.py::test_no_roles_user_sees_empty_nav_in_tenant -v)",
       "Bash(Get-ChildItem -Recurse -Directory)",
       "Bash(Select-Object -First 20)",
-      "Bash(Remove-Item \"f:\\\\08_Projekte\\\\WebApps\\\\coreAdmin\\\\coreAdmin\\\\adminfoundry\\\\models\\\\rate_limit.py\")"
+      "Bash(Remove-Item \"f:\\\\08_Projekte\\\\WebApps\\\\coreAdmin\\\\coreAdmin\\\\adminfoundry\\\\models\\\\rate_limit.py\")",
+      "Bash(python -m pytest tests/test_admin_contract.py::test_superadmin_sees_all_models_in_navigation tests/test_admin_contract.py::test_admin_navigation_endpoint tests/test_role_permissions.py::test_role_permissions_not_in_admin_registry -v --tb=long)",
+      "Bash(python -m pytest tests/test_gdpr_and_2fa.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_users.py::test_create_user_duplicate_email tests/test_users.py::test_update_me_wrong_password -v --tb=long)"
     ],
     "additionalDirectories": [
       "f:\\08_Projekte\\WebApps\\coreAdmin\\coreAdmin\\.claude\\projects\\f--08-Projekte-WebApps-coreAdmin-coreAdmin\\memory"

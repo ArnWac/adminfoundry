@@ -1,3 +1,5 @@
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -7,6 +9,7 @@ from sqlalchemy import select
 from adminfoundry.auth import (
     create_access_token,
     create_access_token_with_iat,
+    create_mfa_token,
     create_refresh_token,
     decode_token,
     verify_password,
@@ -14,31 +17,84 @@ from adminfoundry.auth import (
 from adminfoundry.database import get_db
 from adminfoundry.dependencies import get_current_user
 from adminfoundry.models.user import User
-from adminfoundry.schemas.auth import LoginRequest, PasswordResetConfirm, PasswordResetRequest, RefreshRequest, TokenResponse
+from adminfoundry.schemas.auth import (
+    LoginRequest,
+    LoginResponse,
+    MFAVerifyRequest,
+    PasswordResetConfirm,
+    PasswordResetRequest,
+    RefreshRequest,
+    TokenResponse,
+    TwoFASetupResponse,
+)
 from adminfoundry.schemas.session import SessionRead, SessionRevoke
 from adminfoundry.schemas.user import UserPublic
 from adminfoundry.services.session_security import session_security
 from adminfoundry.settings import settings
-from adminfoundry.token_blacklist import blacklist_token
+from adminfoundry.token_blacklist import blacklist_token, is_blacklisted
+from adminfoundry.login_security import is_locked, record_failure, clear_failures
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
-@router.post("/login", response_model=TokenResponse)
+def _totp_valid(secret: str, code: str) -> bool:
+    try:
+        import pyotp
+        return pyotp.TOTP(secret).verify(code, valid_window=1)
+    except Exception:
+        return False
+
+
+def _hash_backup(code: str) -> str:
+    return hashlib.sha256(code.encode()).hexdigest()
+
+
+def _check_backup_code(user: User, code: str) -> bool:
+    """Verify code against stored backup codes and consume it if valid."""
+    if not user.totp_backup_codes:
+        return False
+    h = _hash_backup(code)
+    remaining = [c for c in user.totp_backup_codes if c != h]
+    if len(remaining) == len(user.totp_backup_codes):
+        return False  # not found
+    user.totp_backup_codes = remaining or None
+    return True
+
+
+@router.post("/login", response_model=LoginResponse)
 async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == body.email))
+    email = body.email.lower()
+
+    if is_locked(email):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Account temporarily locked due to repeated login failures",
+        )
+
+    result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
 
     if user is None or not verify_password(body.password, user.hashed_password):
+        record_failure(email)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account inactive")
 
-    # Use iat-embedded token so step-up checks can verify recency
-    access_token = create_access_token_with_iat(str(user.id))
+    clear_failures(email)
+
+    if settings.ENFORCE_2FA_FOR_SUPERADMIN and user.is_superadmin and not user.totp_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Superadmin accounts must enable two-factor authentication before logging in",
+        )
+
+    if user.totp_enabled:
+        mfa_token = create_mfa_token(str(user.id))
+        return LoginResponse(mfa_required=True, mfa_token=mfa_token)
+
+    access_token = create_access_token_with_iat(str(user.id), token_version=user.token_version)
     refresh_token = create_refresh_token(str(user.id))
 
-    # Register session for listing/revocation
     from jose import jwt as _jwt
     payload = _jwt.decode(access_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
     exp = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
@@ -46,7 +102,101 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
     ua = request.headers.get("user-agent")
     session_security.register(payload["jti"], user.id, exp, ip_address=ip, user_agent=ua)
 
-    return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+    return LoginResponse(access_token=access_token, refresh_token=refresh_token)
+
+
+@router.post("/2fa/verify", response_model=LoginResponse)
+async def verify_2fa(
+    request: Request,
+    body: MFAVerifyRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Complete MFA login — exchange mfa_token + TOTP code for full access tokens."""
+    payload = decode_token(body.mfa_token, expected_type="mfa")
+    if payload is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired MFA token")
+
+    user = (await db.execute(select(User).where(User.id == payload["sub"]))).scalar_one_or_none()
+    if user is None or not user.is_active or not user.totp_enabled:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid MFA session")
+
+    code_ok = _totp_valid(user.totp_secret, body.code) or _check_backup_code(user, body.code)
+    if not code_ok:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication code")
+
+    await db.commit()  # persist consumed backup code if any
+
+    access_token = create_access_token_with_iat(str(user.id), token_version=user.token_version)
+    refresh_token = create_refresh_token(str(user.id))
+
+    from jose import jwt as _jwt
+    token_payload = _jwt.decode(access_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    exp = datetime.fromtimestamp(token_payload["exp"], tz=timezone.utc)
+    ip = request.client.host if request.client else None
+    ua = request.headers.get("user-agent")
+    session_security.register(token_payload["jti"], user.id, exp, ip_address=ip, user_agent=ua)
+
+    return LoginResponse(access_token=access_token, refresh_token=refresh_token)
+
+
+@router.post("/2fa/setup", response_model=TwoFASetupResponse)
+async def setup_2fa(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a new TOTP secret. Returns the otpauth:// URI and one-time backup codes.
+    Call /2fa/enable with a valid code to activate 2FA."""
+    try:
+        import pyotp
+    except ImportError:
+        raise HTTPException(status_code=503, detail="pyotp not installed — add the [2fa] extra")
+
+    secret = pyotp.random_base32()
+    totp = pyotp.TOTP(secret)
+    uri = totp.provisioning_uri(name=current_user.email, issuer_name=settings.TOTP_ISSUER)
+
+    # Generate 8 backup codes — shown once, stored hashed
+    backup_codes = [secrets.token_hex(4) for _ in range(8)]
+    current_user.totp_secret = secret
+    current_user.totp_backup_codes = [_hash_backup(c) for c in backup_codes]
+    await db.commit()
+
+    return TwoFASetupResponse(totp_uri=uri, backup_codes=backup_codes)
+
+
+@router.post("/2fa/enable", status_code=status.HTTP_200_OK)
+async def enable_2fa(
+    body: MFAVerifyRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Confirm TOTP setup with a valid code and activate 2FA on the account."""
+    if not current_user.totp_secret:
+        raise HTTPException(status_code=400, detail="Run /2fa/setup first")
+    if not _totp_valid(current_user.totp_secret, body.code):
+        raise HTTPException(status_code=400, detail="Invalid code")
+    current_user.totp_enabled = True
+    await db.commit()
+    return {"2fa": "enabled"}
+
+
+@router.post("/2fa/disable", status_code=status.HTTP_200_OK)
+async def disable_2fa(
+    body: MFAVerifyRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Disable 2FA — requires a valid TOTP code or backup code as confirmation."""
+    if not current_user.totp_enabled:
+        raise HTTPException(status_code=400, detail="2FA is not enabled")
+    code_ok = _totp_valid(current_user.totp_secret, body.code) or _check_backup_code(current_user, body.code)
+    if not code_ok:
+        raise HTTPException(status_code=400, detail="Invalid code")
+    current_user.totp_enabled = False
+    current_user.totp_secret = None
+    current_user.totp_backup_codes = None
+    await db.commit()
+    return {"2fa": "disabled"}
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -55,7 +205,10 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     if payload is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
-    # Impersonation tokens carry renewable=False; explicitly block any refresh token marked non-renewable
+    jti = payload.get("jti", "")
+    if jti and await is_blacklisted(jti, db):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token has been revoked")
+
     if payload.get("renewable") is False:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Token is not renewable"
@@ -71,10 +224,15 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
             detail="User not found or inactive",
         )
 
-    return TokenResponse(
-        access_token=create_access_token(str(user.id)),
-        refresh_token=create_refresh_token(str(user.id)),
-    )
+    new_access = create_access_token(str(user.id), token_version=user.token_version)
+    new_refresh = create_refresh_token(str(user.id))
+
+    # Rotate: blacklist the consumed refresh token
+    if jti:
+        await blacklist_token(jti, payload.get("exp", 0), db)
+
+    await db.commit()
+    return TokenResponse(access_token=new_access, refresh_token=new_refresh)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -98,7 +256,7 @@ async def me(current_user: User = Depends(get_current_user)):
 
 
 # ---------------------------------------------------------------------------
-# Phase 12 — session management
+# Session management
 # ---------------------------------------------------------------------------
 
 @router.get("/sessions", response_model=list[SessionRead])
@@ -106,7 +264,6 @@ async def list_sessions(
     request: Request,
     current_user: User = Depends(get_current_user),
 ):
-    """List active sessions for the current user."""
     records = session_security.list_for_user(current_user.id)
     return [
         SessionRead(
@@ -129,17 +286,14 @@ async def revoke_session(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Revoke a specific session by JTI."""
     record = next(
         (r for r in session_security._sessions.values() if r.jti == jti), None
     )
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    # Users can only revoke their own sessions; superadmins can revoke any
     if str(record.user_id) != str(current_user.id) and not current_user.is_superadmin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     session_security.revoke(jti)
-    # Blacklist using the session's actual expiry so the JTI stays blocked until it naturally expires
     await blacklist_token(jti, record.expires_at.timestamp(), db)
     await db.commit()
 
@@ -149,11 +303,6 @@ async def step_up(
     request: Request,
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Check whether the current token was issued recently enough for step-up
-    protected actions.  Returns 200 if the token is within STEP_UP_WINDOW_MINUTES,
-    403 otherwise.  Clients must re-login to satisfy step-up requirements.
-    """
     payload = getattr(request.state, "token_payload", {})
     iat = payload.get("iat")
     if iat is None:
@@ -185,11 +334,11 @@ async def password_reset_request(request: Request, body: PasswordResetRequest, d
     if user is None:
         return  # don't reveal whether email exists
 
-    import secrets
+    import secrets as _secrets
     from adminfoundry.models.password_reset_token import PasswordResetToken
     from adminfoundry.email import send_email
 
-    token = secrets.token_urlsafe(32)
+    token = _secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.PASSWORD_RESET_TIMEOUT_MINUTES)
     db.add(PasswordResetToken(token=token, user_id=user.id, expires_at=expires_at))
     await db.commit()
