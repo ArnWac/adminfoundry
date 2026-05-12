@@ -88,3 +88,9 @@ class ModelContractMeta(BaseModel):
     permission_matrix: bool = False
     # False: deletion blocked at API level (e.g. immutable audit logs)
     allow_delete: bool = True
+    # True: soft-delete enabled — DELETE moves to trash; restore/hard-delete available
+    soft_delete: bool = False
+    # Fieldsets for grouping fields on create/edit forms
+    fieldsets: list[tuple[str, list[str]]] | None = None
+    # True: import CSV button shown; POST /{model}/import endpoint enabled
+    allow_import: bool = False

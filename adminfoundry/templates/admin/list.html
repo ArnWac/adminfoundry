@@ -4,7 +4,9 @@
 {% block content %}
 <div class="page-header">
   <h1 id="page-title">{{ model_label_plural }}</h1>
-  <a href="{{ ui_base }}/{{ model }}/new" class="btn btn-primary">+ <span data-i18n="action_new">New</span></a>
+  <div class="page-actions" id="page-actions">
+    <a href="{{ ui_base }}/{{ model }}/new" class="btn btn-primary">+ <span data-i18n="action_new">New</span></a>
+  </div>
 </div>
 <div class="card">
   <div class="toolbar" role="search" style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">

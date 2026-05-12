@@ -94,11 +94,30 @@ class ModelAdmin:
     permission_matrix: bool = False
     # False: block deletion at the API level (for immutable models like audit logs)
     allow_delete: bool = True
+    # True: DELETE sets deleted_at instead of removing the row; requires SoftDeleteMixin
+    soft_delete: bool = False
 
     # Extra virtual fields only present in the create form (not model columns).
     # Dict of {field_name: python_type}, e.g. {"password": str}.
     # Use before_create() to transform them before the object is saved.
     extra_create_fields: dict = {}
+
+    # Fieldsets group form fields into labeled sections on create/edit pages.
+    # Format: [("Section title", ["field1", "field2"]), ...]
+    # Fields not listed appear above all fieldsets.
+    fieldsets: list[tuple[str, list[str]]] | None = None
+
+    # Override the widget rendered for specific fields.
+    # Supported: "image", "file" (URL-based; stored as string column).
+    widget_overrides: dict[str, str] = {}
+
+    # True: show an "Import CSV" button on the list page and enable the import endpoint.
+    allow_import: bool = False
+
+    # Computed virtual columns: {field_name: callable(obj) -> value}
+    # Rendered as read-only columns. Listed in list_display to appear in the list view.
+    # Example: computed_fields = {"word_count": lambda obj: len((obj.body or "").split())}
+    computed_fields: dict = {}
 
     def field_permission(self, user, field_name: str, record) -> "FieldPolicy | None":
         """Override to return a FieldPolicy based on the current record state.
@@ -135,7 +154,7 @@ class ModelAdmin:
         ):
             if attr not in cls.__dict__:
                 setattr(cls, attr, [])
-        for attr in ("field_policies", "action_policies", "field_choices_urls"):
+        for attr in ("field_policies", "action_policies", "field_choices_urls", "widget_overrides", "computed_fields"):
             if attr not in cls.__dict__:
                 setattr(cls, attr, {})
 

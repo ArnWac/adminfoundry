@@ -31,7 +31,12 @@ function T(key, vars) {
     || window.ADMIN_LOCALE_DEFAULTS?.language
     || 'en';
   const i18n = window.ADMIN_I18N || {};
-  const catalog = i18n[lang] || i18n['en'] || {};
+  const extra = window.ADMIN_EXTRA_I18N || {};
+  // Extra strings override built-ins; fall back en→en for both layers
+  const catalog = {
+    ...(i18n[lang] || i18n['en'] || {}),
+    ...(extra[lang] || extra['en'] || {}),
+  };
   let s = Object.prototype.hasOwnProperty.call(catalog, key) ? catalog[key] : key;
   if (vars) Object.entries(vars).forEach(([k, v]) => { s = s.replaceAll(`{${k}}`, String(v)); });
   return s;
@@ -234,12 +239,20 @@ async function enterTenantPanel(tenantId, slug) {
 // ---------------------------------------------------------------------------
 // List page
 // ---------------------------------------------------------------------------
+let _listController = null;
+
 async function initList(model) {
   if (!Auth.isLoggedIn()) { Auth.redirectToLogin(); return; }
 
+  _listController?.abort();
+  _listController = new AbortController();
+  const { signal } = _listController;
+
   let meta, page = 1, pageSize = Prefs.getPageSize(), orderBy = '';
-  const urlQ = new URLSearchParams(window.location.search).get('q') || '';
+  const _urlParams = new URLSearchParams(window.location.search);
+  const urlQ = _urlParams.get('q') || '';
   let q = urlQ;
+  let trashMode = _urlParams.get('trash') === '1';
   const selected = new Set();
 
   const actionBar = document.getElementById('action-bar');
@@ -400,6 +413,7 @@ async function initList(model) {
     let url = `/admin/${model}?page=${page}&page_size=${pageSize}`;
     if (q) url += `&q=${encodeURIComponent(q)}`;
     if (orderBy) url += `&order_by=${encodeURIComponent(orderBy)}`;
+    if (trashMode) url += `&trash=1`;
 
     const hasBulkActions = (meta?.actions || []).some(a => a.bulk);
 
@@ -427,6 +441,7 @@ async function initList(model) {
       if (!data.items.length) {
         tableEl.innerHTML = `<tr><td colspan="99" style="color:#586069">${T('error_no_records')}</td></tr>`;
       } else {
+        const fieldMap = Object.fromEntries((meta?.fields || []).map(f => [f.name, f]));
         tableEl.innerHTML = data.items.map(item => {
           const id = item.id || '';
           const isChecked = selected.has(id) ? ' checked' : '';
@@ -438,6 +453,13 @@ async function initList(model) {
               const v = item[c] ?? '';
               return `<td><input class="list-inline-input" data-id="${esc(id)}" data-field="${esc(c)}" value="${esc(String(v))}" aria-label="${esc(c)}"></td>`;
             }
+            const fm = fieldMap[c];
+            if (fm?.widget === 'image' && item[c]) {
+              return `<td><img src="${esc(String(item[c]))}" class="list-image-thumb" onerror="this.style.display='none'"></td>`;
+            }
+            if (fm?.widget === 'file' && item[c]) {
+              return `<td><a href="${esc(String(item[c]))}" target="_blank" rel="noopener" style="font-size:.82rem">${esc(String(item[c]).split('/').pop())}</a></td>`;
+            }
             return `<td>${fmtCell(item[c])}</td>`;
           }).join('');
           const enterTenantBtn = (model === 'tenants' && item.slug && !_adminCtx?.is_impersonating && !_adminCtx?.tenant)
@@ -446,10 +468,15 @@ async function initList(model) {
           const deleteBtn = meta?.allow_delete !== false
             ? `<a class="btn btn-sm btn-icon" href="${UI_BASE}/${model}/${id}/delete" title="${T('action_delete')}" aria-label="${T('action_delete')}" style="color:#de350b"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></a>`
             : '';
+          // Trash mode: show Restore + Hard Delete instead of normal CRUD buttons
+          const trashActions = trashMode ? `
+            <button class="btn btn-sm" data-restore-id="${esc(id)}" title="${T('action_restore')}" style="color:#0052cc">${T('action_restore')}</button>
+            <button class="btn btn-sm btn-icon" data-hard-delete-id="${esc(id)}" title="${T('action_hard_delete')}" aria-label="${T('action_hard_delete')}" style="color:#de350b"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></a>
+          ` : null;
           const actions = `<td style="white-space:nowrap;width:1%;padding-right:.75rem">
-            <a class="btn btn-sm btn-icon" href="${UI_BASE}/${model}/${id}" title="${T('action_view')}" aria-label="${T('action_view')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></a>
+            ${trashActions ?? `<a class="btn btn-sm btn-icon" href="${UI_BASE}/${model}/${id}" title="${T('action_view')}" aria-label="${T('action_view')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></a>
             <a class="btn btn-sm btn-icon" href="${UI_BASE}/${model}/${id}/edit" title="${T('action_edit')}" aria-label="${T('action_edit')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></a>
-            ${enterTenantBtn}${deleteBtn}
+            ${enterTenantBtn}${deleteBtn}`}
           </td>`;
           return `<tr>${checkTd}${cells}${actions}</tr>`;
         }).join('');
@@ -501,12 +528,75 @@ async function initList(model) {
 
   try {
     meta = await API.get(`/admin/${model}/meta`);
-    document.getElementById('page-title').textContent = meta.label_plural || model;
+    const label = meta.label_plural || model;
+    document.getElementById('page-title').textContent = trashMode
+      ? T('label_trash_mode', { label })
+      : label;
   } catch (_) {
     document.getElementById('page-title').textContent = model;
   }
 
+  // Inject Import CSV button when allow_import is enabled
+  if (meta?.allow_import && !trashMode) {
+    const actionsEl = document.getElementById('page-actions');
+    if (actionsEl) {
+      actionsEl.querySelector('.import-btn')?.remove();
+      const importBtn = document.createElement('button');
+      importBtn.className = 'btn btn-sm import-btn';
+      importBtn.textContent = T('action_import');
+      importBtn.onclick = () => openImportModal(model, meta);
+      actionsEl.prepend(importBtn);
+    }
+  }
+
+  // Inject Trash / Back-to-list toggle button when soft_delete is enabled
+  if (meta?.soft_delete) {
+    const actionsEl = document.getElementById('page-actions');
+    if (actionsEl) {
+      actionsEl.querySelector('.trash-toggle-btn')?.remove();
+      const trashBtn = document.createElement('a');
+      trashBtn.href = trashMode ? `${UI_BASE}/${model}` : `${UI_BASE}/${model}?trash=1`;
+      trashBtn.className = 'btn btn-sm trash-toggle-btn';
+      trashBtn.textContent = trashMode ? T('action_back_to_list') : T('action_view_trash');
+      actionsEl.prepend(trashBtn);
+    }
+  }
+
   initActionBar();
+
+  // Delegate restore + hard-delete clicks from trash view
+  document.addEventListener('click', async e => {
+    const restoreBtn = e.target.closest('[data-restore-id]');
+    if (restoreBtn) {
+      restoreBtn.disabled = true;
+      try {
+        await API.post(`/admin/${model}/${restoreBtn.dataset.restoreId}/restore`, {});
+        showSuccess(T('action_restore'));
+        await load();
+      } catch (err) {
+        showError(fmtAPIError(err));
+        restoreBtn.disabled = false;
+      }
+      return;
+    }
+    const hardBtn = e.target.closest('[data-hard-delete-id]');
+    if (hardBtn) {
+      const ok = await showConfirmModal(
+        T('action_hard_delete'),
+        T('confirm_hard_delete'),
+        true,
+      );
+      if (!ok) return;
+      hardBtn.disabled = true;
+      try {
+        await API.delete(`/admin/${model}/${hardBtn.dataset.hardDeleteId}/hard`);
+        await load();
+      } catch (err) {
+        showError(fmtAPIError(err));
+        hardBtn.disabled = false;
+      }
+    }
+  }, { signal });
 
   // Search — pre-fill from URL ?q= if present
   const searchEl = document.getElementById('search-input');
@@ -523,7 +613,7 @@ async function initList(model) {
     const col = a.dataset.sort;
     orderBy = orderBy === col ? `-${col}` : col;
     page = 1; load();
-  });
+  }, { signal });
 
   // "Enter tenant panel" button clicks (delegated, tenants list only)
   document.addEventListener('click', async e => {
@@ -536,7 +626,7 @@ async function initList(model) {
       btn.disabled = false;
       showError(fmtAPIError(err));
     }
-  });
+  }, { signal });
 
   await initNav(model);
   setBreadcrumb([{ label: 'Home', href: UI_BASE + '/dashboard' }, { label: meta?.label_plural || model, href: '' }]);
@@ -563,7 +653,15 @@ async function initDetail(model, objectId) {
     bodyEl.innerHTML = '<div class="detail-grid">' + fields.map(f => {
       const val = item[f.name];
       if (val === undefined) return '';
-      return `<div class="detail-label">${esc(f.label || f.name)}</div><div class="detail-value">${fmtCell(val)}</div>`;
+      let displayVal;
+      if (f.widget === 'image' && val) {
+        displayVal = `<img src="${esc(String(val))}" style="max-height:120px;border-radius:4px" onerror="this.style.display='none'">`;
+      } else if (f.widget === 'file' && val) {
+        displayVal = `<a href="${esc(String(val))}" target="_blank" rel="noopener">${esc(String(val))}</a>`;
+      } else {
+        displayVal = fmtCell(val);
+      }
+      return `<div class="detail-label">${esc(f.label || f.name)}</div><div class="detail-value">${displayVal}</div>`;
     }).join('') + '</div>';
 
     document.getElementById('page-title').textContent = `${meta?.label || model} detail`;
@@ -599,6 +697,12 @@ async function initDetail(model, objectId) {
       const layoutEl = bodyEl.closest('.detail-layout') || bodyEl.parentElement;
       layoutEl.insertAdjacentElement('afterend', matrixCard);
       renderPermissionMatrix(objectId, document.getElementById('permission-matrix-body'));
+    }
+
+    // Inline relations (read-only in detail view)
+    if (meta?.inline_relations?.length) {
+      const anchor = bodyEl.closest('.detail-layout') || bodyEl.parentElement;
+      await renderInlineRelations(meta.inline_relations, item, objectId, anchor, false);
     }
   } catch (e) {
     bodyEl.innerHTML = `<div class="alert alert-error" style="display:block">${esc(fmtAPIError(e))}</div>`;
@@ -684,9 +788,8 @@ async function initCreate(model) {
       return;
     }
 
-    // Rebuild form content — always include the submit button
     formEl.innerHTML =
-      writableFields.map(f => buildFieldInput(f)).join('') +
+      renderFormFields(writableFields, meta.fieldsets) +
       `<div style="margin-top:1rem"><button type="submit" class="btn btn-primary">${T('action_create')}</button></div>`;
 
     populateRelationSelects(formEl);
@@ -747,7 +850,7 @@ async function initUpdate(model, objectId) {
     }
 
     formEl.innerHTML =
-      editableFields.map(f => buildFieldInput(f, item[f.name])).join('') +
+      renderFormFields(editableFields, meta.fieldsets, item) +
       `<div style="margin-top:1rem"><button type="submit" class="btn btn-primary">${T('action_save')}</button></div>`;
 
     populateRelationSelects(formEl);
@@ -777,6 +880,11 @@ async function initUpdate(model, objectId) {
       formEl.parentElement.insertAdjacentElement('afterend', matrixCard);
       renderPermissionMatrix(objectId, document.getElementById('permission-matrix-body'));
     }
+
+    // Inline relations (editable in update view)
+    if (meta?.inline_relations?.length) {
+      await renderInlineRelations(meta.inline_relations, item, objectId, formEl.parentElement, true);
+    }
   } catch (e) {
     formEl.innerHTML = `<div class="alert alert-error" style="display:block">${esc(fmtAPIError(e))}</div>`;
   }
@@ -788,6 +896,85 @@ async function initUpdate(model, objectId) {
     { label: T('nav_edit'), href: '' },
   ]);
   await initNav(model);
+}
+
+// ---------------------------------------------------------------------------
+// Inline relations helpers
+// ---------------------------------------------------------------------------
+function _inlineTable(rows, cols, targetTable) {
+  if (!rows.length) return `<p style="color:var(--text-muted,#586069);font-size:.85rem">${T('error_no_records')}</p>`;
+  const thead = '<tr>' + cols.map(c => `<th>${esc(c)}</th>`).join('') + `<th style="width:80px">${T('table_header_actions')}</th></tr>`;
+  const tbody = rows.map(r =>
+    '<tr>' + cols.map(c => `<td>${esc(fmtCell(r[c]))}</td>`).join('') +
+    `<td><a class="btn btn-sm" href="${UI_BASE}/${targetTable}/${r.id}">${T('action_view')}</a></td></tr>`
+  ).join('');
+  return `<table>${thead}<tbody>${tbody}</tbody></table>`;
+}
+
+async function renderInlineRelations(inlineRelations, item, parentId, container, allowEdit) {
+  for (const rel of (inlineRelations || [])) {
+    const relData = item[rel.attr];
+    if (!Array.isArray(relData)) continue;
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.marginTop = '1.25rem';
+    const relMeta = await API.get(`/admin/${rel.target_table}/meta`).catch(() => null);
+    const cols = relMeta?.list_fields?.length ? relMeta.list_fields : Object.keys(relData[0] || {}).filter(k => k !== 'id').slice(0, 5);
+    let addBtn = '';
+    if (allowEdit && rel.fk_field) {
+      addBtn = `<button class="btn btn-sm" style="margin-bottom:.75rem" onclick="openChildCreate('${esc(rel.target_table)}','${esc(rel.fk_field)}','${esc(parentId)}')">${T('action_new')} ${esc(rel.label)}</button>`;
+    }
+    card.innerHTML = `<h3 style="font-size:.95rem;font-weight:600;margin-bottom:1rem">${esc(rel.label)}</h3>${addBtn}` +
+      _inlineTable(relData, cols, rel.target_table);
+    container.insertAdjacentElement('afterend', card);
+  }
+}
+
+function openChildCreate(targetTable, fkField, parentId) {
+  document.getElementById('inline-child-modal')?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'inline-child-modal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9000;display:flex;align-items:center;justify-content:center';
+  const panel = document.createElement('div');
+  panel.style.cssText = 'background:var(--surface,#fff);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.25);padding:1.5rem;width:480px;max-width:95vw;max-height:80vh;overflow-y:auto;position:relative';
+  panel.innerHTML = `<button onclick="document.getElementById('inline-child-modal').remove()" style="position:absolute;top:.75rem;right:.75rem;background:none;border:none;font-size:1.2rem;cursor:pointer" aria-label="${T('aria_close')}">✕</button>
+    <h3 style="font-size:1rem;margin-bottom:1rem">${T('modal_new_title', {table: targetTable})}</h3>
+    <div id="inline-child-form"><p class="loading">${T('status_loading')}</p></div>`;
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+  API.get(`/admin/${targetTable}/meta`).then(meta => {
+    const wrapEl = document.getElementById('inline-child-form');
+    const writableFields = (meta.fields || []).filter(
+      f => !f.readonly && !['id', 'created_at', 'updated_at'].includes(f.name) && f.name !== fkField
+    );
+    const form = document.createElement('form');
+    form.innerHTML =
+      renderFormFields(writableFields, meta.fieldsets) +
+      `<input type="hidden" name="${esc(fkField)}" value="${esc(parentId)}">` +
+      `<div style="margin-top:1rem;display:flex;gap:.5rem">
+        <button type="submit" class="btn btn-primary">${T('action_create')}</button>
+        <button type="button" class="btn btn-secondary" onclick="document.getElementById('inline-child-modal').remove()">${T('action_cancel')}</button>
+      </div>`;
+    wrapEl.replaceChildren(form);
+    populateRelationSelects(panel);
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const body = collectForm(form, [...writableFields, {name: fkField, field_type: 'string'}]);
+      body[fkField] = parentId;
+      try {
+        await API.post(`/admin/${targetTable}`, body);
+        overlay.remove();
+        window.location.reload();
+      } catch (err) {
+        showError(fmtAPIError(err));
+      }
+    });
+  }).catch(err => {
+    document.getElementById('inline-child-form').innerHTML =
+      `<p style="color:var(--danger,#c0392b)">${esc(fmtAPIError(err))}</p>`;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -833,6 +1020,12 @@ function buildFieldInput(f, value) {
         ${newBtn}
       </div>`;
     }
+  } else if (f.widget === 'image') {
+    const preview = val ? `<img src="${esc(String(val))}" style="max-height:100px;display:block;margin-bottom:.4rem;border-radius:4px" onerror="this.style.display='none'">` : '';
+    input = preview + `<input type="text" name="${f.name}" id="f_${f.name}" value="${esc(String(val))}"${roAttr} placeholder="Image URL">`;
+  } else if (f.widget === 'file') {
+    const link = val ? `<a href="${esc(String(val))}" target="_blank" rel="noopener" style="font-size:.82rem;display:block;margin-bottom:.3rem">${esc(String(val))}</a>` : '';
+    input = link + `<input type="text" name="${f.name}" id="f_${f.name}" value="${esc(String(val))}"${roAttr} placeholder="File URL">`;
   } else {
     const itype = fieldInputType(f.field_type);
     input = `<input type="${itype}" name="${f.name}" id="f_${f.name}" value="${esc(String(val))}"${roAttr}>`;
@@ -847,6 +1040,22 @@ function buildFieldInput(f, value) {
 
 function fieldInputType(ft) {
   return { integer: 'number', float: 'number', datetime: 'datetime-local', uuid: 'text' }[ft] || 'text';
+}
+
+function renderFormFields(fields, fieldsets, values = {}) {
+  if (!fieldsets || !fieldsets.length) {
+    return fields.map(f => buildFieldInput(f, values[f.name])).join('');
+  }
+  const grouped = new Set(fieldsets.flatMap(([, names]) => names));
+  let html = fields.filter(f => !grouped.has(f.name)).map(f => buildFieldInput(f, values[f.name])).join('');
+  for (const [title, names] of fieldsets) {
+    const fsFields = names.map(n => fields.find(f => f.name === n)).filter(Boolean);
+    if (!fsFields.length) continue;
+    html += `<fieldset class="form-fieldset"><legend class="form-fieldset-legend">${esc(title)}</legend>` +
+      fsFields.map(f => buildFieldInput(f, values[f.name])).join('') +
+      `</fieldset>`;
+  }
+  return html;
 }
 
 function collectForm(formEl, fields) {
@@ -1480,5 +1689,110 @@ async function initDashboard() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Import CSV modal
+// ---------------------------------------------------------------------------
+function openImportModal(model, meta) {
+  document.getElementById('import-modal')?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'import-modal';
+  overlay.className = 'modal-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.innerHTML = `
+    <div class="modal-dialog" style="max-width:560px">
+      <h2 style="margin-top:0;font-size:1.1rem">${T('action_import')} — ${esc(meta?.label_plural || model)}</h2>
+      <p style="color:var(--text-muted,#586069);font-size:.85rem">${T('import_drop_hint')}</p>
+      <input type="file" id="import-file-input" accept=".csv,text/csv" style="margin-bottom:1rem;display:block">
+      <div id="import-status" style="margin-bottom:.75rem"></div>
+      <div id="import-preview" style="overflow-x:auto;max-height:260px;font-size:.82rem"></div>
+      <div style="display:flex;gap:.5rem;margin-top:1rem;justify-content:flex-end">
+        <button id="import-confirm-btn" class="btn btn-primary" disabled>Import</button>
+        <button class="btn btn-secondary" onclick="document.getElementById('import-modal').remove()">${T('action_cancel')}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+  let validTotal = 0;
+
+  document.getElementById('import-file-input').addEventListener('change', async e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const statusEl = document.getElementById('import-status');
+    const previewEl = document.getElementById('import-preview');
+    const confirmBtn = document.getElementById('import-confirm-btn');
+    statusEl.textContent = T('status_loading');
+    confirmBtn.disabled = true;
+    validTotal = 0;
+
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const resp = await fetch(`${API_BASE}/admin/${model}/import?dry_run=true`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY)}` },
+        body: form,
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        statusEl.innerHTML = `<span style="color:var(--danger,#c0392b)">${esc(err.detail || 'Upload failed')}</span>`;
+        return;
+      }
+      const data = await resp.json();
+      validTotal = data.total - data.errors.length;
+
+      if (data.errors.length) {
+        statusEl.innerHTML = `<span style="color:var(--danger,#c0392b)">${T('import_error_count', { count: data.errors.length })}</span>`;
+        previewEl.innerHTML = '<table style="width:100%;border-collapse:collapse"><thead><tr><th>Row</th><th>Error</th></tr></thead><tbody>' +
+          data.errors.map(er => `<tr><td style="padding:.25rem .5rem">${esc(String(er.row))}</td><td style="padding:.25rem .5rem;color:var(--danger,#c0392b)">${esc(er.error)}</td></tr>`).join('') +
+          '</tbody></table>';
+      } else {
+        statusEl.innerHTML = `<span style="color:var(--success,#27ae60)">${T('import_dry_run_ok', { count: data.total })}</span>`;
+        if (data.preview?.length) {
+          const cols = Object.keys(data.preview[0].data);
+          previewEl.innerHTML = `<p style="font-size:.8rem;color:var(--text-muted,#586069)">${T('import_preview_title', { count: data.preview.length, total: data.total })}</p>` +
+            '<table style="width:100%;border-collapse:collapse"><thead><tr>' + cols.map(c => `<th style="padding:.25rem .5rem;text-align:left">${esc(c)}</th>`).join('') + '</tr></thead><tbody>' +
+            data.preview.map(r => '<tr>' + cols.map(c => `<td style="padding:.25rem .5rem">${esc(String(r.data[c] ?? ''))}</td>`).join('') + '</tr>').join('') +
+            '</tbody></table>';
+        }
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = T('import_confirm', { count: data.total });
+      }
+    } catch (err) {
+      statusEl.innerHTML = `<span style="color:var(--danger,#c0392b)">${esc(fmtAPIError(err))}</span>`;
+    }
+  });
+
+  document.getElementById('import-confirm-btn').addEventListener('click', async () => {
+    const file = document.getElementById('import-file-input').files?.[0];
+    if (!file) return;
+    const btn = document.getElementById('import-confirm-btn');
+    const statusEl = document.getElementById('import-status');
+    btn.disabled = true;
+    btn.textContent = T('status_loading');
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const resp = await fetch(`${API_BASE}/admin/${model}/import?dry_run=false`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem(TOKEN_KEY)}` },
+        body: form,
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.errors?.length) {
+        statusEl.innerHTML = `<span style="color:var(--danger,#c0392b)">${esc(data.detail || T('import_error_count', { count: data.errors?.length || '?' }))}</span>`;
+        btn.disabled = false;
+      } else {
+        overlay.remove();
+        showSuccess(T('import_success', { count: data.imported }));
+      }
+    } catch (err) {
+      statusEl.innerHTML = `<span style="color:var(--danger,#c0392b)">${esc(fmtAPIError(err))}</span>`;
+      btn.disabled = false;
+    }
+  });
+}
+
 // Expose globally
-window.AdminUI = { Auth, API, Prefs, DarkMode, T, applyI18n, initNav, initList, initDetail, initCreate, initUpdate, initConfirmDelete, initSettings, initDashboard, openInlineCreate, enterTenantPanel, showToast, showError, showSuccess };
+window.AdminUI = { Auth, API, Prefs, DarkMode, T, applyI18n, initNav, initList, initDetail, initCreate, initUpdate, initConfirmDelete, initSettings, initDashboard, openInlineCreate, openImportModal, openChildCreate, enterTenantPanel, showToast, showError, showSuccess };

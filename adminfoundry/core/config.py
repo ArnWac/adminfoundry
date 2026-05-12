@@ -32,7 +32,6 @@ class CoreAdminConfig:
     enable_builtin_ui: bool = True
     enable_multi_tenant: bool = False
     enable_basic_audit: bool = True
-    enable_workflows: bool = False
 
     # Locale defaults — applied as the initial value for all users who have
     # not yet saved a personal preference. Users can override in Settings.
@@ -48,6 +47,9 @@ class CoreAdminConfig:
 
     # Optional custom auth provider — None uses the built-in JWT provider
     auth_provider: AuthProvider | None = None
+    # Optional custom user model — must have id, email, is_active, is_superadmin.
+    # adminfoundry validates the model against these requirements at startup.
+    user_model: Any | None = None
     # Set False to skip mounting built-in login/logout/refresh routes
     include_auth_routes: bool = True
 
@@ -57,8 +59,16 @@ class CoreAdminConfig:
     # Storage backend instance — None uses LocalStorage("uploads")
     storage_backend: Any | None = None
 
-    # Dashboard widgets — empty list uses DEFAULT_WIDGETS (ModelCounts + AdminMetrics)
-    dashboard_widgets: list[Any] = field(default_factory=list)
+    # Dashboard widgets — None uses DEFAULT_WIDGETS (ModelCounts + AdminMetrics).
+    # Provide a list to control exactly which widgets appear. Use
+    # `from adminfoundry.dashboard import DEFAULT_WIDGETS` to extend the defaults:
+    #   dashboard_widgets=[*DEFAULT_WIDGETS, MyCustomWidget()]
+    dashboard_widgets: list[Any] | None = None
+
+    # Extra i18n strings injected into the admin UI — merged on top of built-in strings.
+    # Lets app code add/override translations without modifying the package.
+    # Structure: {"en": {"my_action_label": "My Action"}, "de": {"my_action_label": "Meine Aktion"}}
+    extra_i18n: dict = field(default_factory=dict)
 
     @classmethod
     def from_pyproject(cls, path: str | None = None) -> "CoreAdminConfig":
@@ -76,7 +86,6 @@ class CoreAdminConfig:
             enable_builtin_ui=s.get("enable_builtin_ui", True),
             enable_multi_tenant=s.get("enable_multi_tenant", False),
             enable_basic_audit=s.get("enable_basic_audit", True),
-            enable_workflows=s.get("enable_workflows", False),
             default_language=s.get("default_language", "en"),
             default_date_format=s.get("default_date_format", "locale"),
             default_date_pattern=s.get("default_date_pattern", "%Y-%m-%d %H:%M"),
@@ -90,21 +99,17 @@ class CoreAdminConfig:
             enable_builtin_ui=getattr(settings, "ENABLE_BUILTIN_ADMIN_UI", True),
             enable_multi_tenant=getattr(settings, "MULTI_TENANT", False),
             enable_basic_audit=True,
-            enable_workflows=getattr(settings, "ENABLE_WORKFLOWS", False),
             auth_provider=None,
             include_auth_routes=True,
         )
 
     def enabled_extension_names(self) -> list[str]:
         """Return the names of all enabled user-provided extensions."""
-        names: list[str] = []
-        if self.enable_workflows:
-            names.append("workflows")
-        for ext in self.extensions:
-            name = getattr(ext, "name", None)
-            if name:
-                names.append(name)
-        return names
+        return [
+            name
+            for ext in self.extensions
+            if (name := getattr(ext, "name", None))
+        ]
 
     def to_safe_dict(self) -> dict:
         """UI-safe representation for admin contract and diagnostics."""
@@ -112,6 +117,5 @@ class CoreAdminConfig:
             "enable_builtin_ui": self.enable_builtin_ui,
             "enable_multi_tenant": self.enable_multi_tenant,
             "enable_basic_audit": self.enable_basic_audit,
-            "enable_workflows": self.enable_workflows,
             "enabled_extensions": self.enabled_extension_names(),
         }

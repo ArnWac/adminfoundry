@@ -1,6 +1,8 @@
 import math
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+import csv
+import io
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from pydantic import ValidationError
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -43,6 +45,36 @@ async def _resolve_impersonation_tenant(payload: dict, current_tenant, db: Async
             select(_Tenant).where(_Tenant.id == uuid.UUID(payload["tenant_id"]))
         )
     ).scalar_one_or_none()
+
+
+async def _enforce_method_caps(
+    model_admin, user, token_payload: dict, method: str, db: AsyncSession
+) -> None:
+    """Enforce per-HTTP-method RolePermission DB check for non-superadmin users.
+
+    Skips superadmins entirely (their access is governed by _check_model_access).
+    Only fires when DB records exist for the user+model combination — falls through
+    gracefully when no RolePermission rows are configured.
+    """
+    if user.is_superadmin:
+        return
+    from adminfoundry.authz.role_caps import fetch_model_caps
+    caps = await fetch_model_caps(user, model_admin.model_name, db)
+    if caps is None:
+        return  # no DB rows → ModelAdmin config already checked by _check_model_access
+    cap_key = {
+        "list": "can_list",
+        "create": "can_create",
+        "read": "can_read",
+        "update": "can_update",
+        "delete": "can_delete",
+    }.get(method)
+    if cap_key and not caps.get(cap_key, True):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+
+
+def _model_supports_soft_delete(model_admin) -> bool:
+    return getattr(model_admin, "soft_delete", False) and hasattr(model_admin.model, "deleted_at")
 
 
 def _get_admin_or_404(model_name: str):
@@ -328,9 +360,8 @@ async def admin_dashboard(
     if t is not None:
         request.state.tenant = t
 
-    widgets_cfg = (
-        (_admin_config.dashboard_widgets if _admin_config else None) or DEFAULT_WIDGETS
-    )
+    _user_widgets = _admin_config.dashboard_widgets if _admin_config else None
+    widgets_cfg = _user_widgets if _user_widgets is not None else DEFAULT_WIDGETS
     provider = getattr(request.app.state, "auth_provider", None)
     is_super = provider.is_superadmin(current_user) if provider else getattr(current_user, "is_superadmin", False)
 
@@ -465,12 +496,14 @@ async def list_objects(
     page_size: int = Query(20, ge=1, le=100),
     q: str | None = Query(None),
     order_by: str | None = Query(None),
+    trash: bool = Query(False, description="Show only soft-deleted records"),
     db: AsyncSession = Depends(get_admin_db),
     current_user: User = Depends(get_current_user),
 ):
     model_admin = _get_admin_or_404(model_name)
     payload = getattr(request.state, "token_payload", {})
     _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+    await _enforce_method_caps(model_admin, current_user, payload, "list", db)
 
     stmt = select(model_admin.model)
 
@@ -478,6 +511,12 @@ async def list_objects(
     tf = _tenant_filter(request, model_admin)
     if tf is not None:
         stmt = stmt.where(tf)
+
+    if _model_supports_soft_delete(model_admin):
+        if trash:
+            stmt = stmt.where(model_admin.model.deleted_at.is_not(None))
+        else:
+            stmt = stmt.where(model_admin.model.deleted_at.is_(None))
 
     # Policy record filter (restricts non-superadmin scope)
     rf = policy_engine.get_record_filter(current_user, model_admin, payload)
@@ -518,6 +557,7 @@ async def create_object(
     model_admin = _get_admin_or_404(model_name)
     payload = getattr(request.state, "token_payload", {})
     _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+    await _enforce_method_caps(model_admin, current_user, payload, "create", db)
 
     create_schema = schema_builder.build_create_schema(model_admin)
     body = await request.json()
@@ -571,6 +611,73 @@ async def create_object(
 
     await _signals.emit("post_create", model_name=model_name, obj=obj, user=current_user)
     return serializer.serialize(obj, model_admin)
+
+
+@router.post("/{model_name}/import")
+async def import_objects(
+    model_name: str,
+    request: Request,
+    file: UploadFile = File(...),
+    dry_run: bool = Query(True),
+    db: AsyncSession = Depends(get_admin_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Import records from a CSV file.
+
+    With dry_run=true (default) validates rows and returns a preview without writing.
+    With dry_run=false commits all valid rows; rolls back if any row fails.
+    """
+    model_admin = _get_admin_or_404(model_name)
+    if not getattr(model_admin, "allow_import", False):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Import not enabled for this model")
+    payload = getattr(request.state, "token_payload", {})
+    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+    await _enforce_method_caps(model_admin, current_user, payload, "create", db)
+
+    content = await file.read()
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File must be UTF-8 encoded CSV")
+
+    reader = csv.DictReader(io.StringIO(text))
+    rows = list(reader)
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CSV file is empty or has no data rows")
+
+    create_schema = schema_builder.build_create_schema(model_admin)
+    preview: list[dict] = []
+    errors: list[dict] = []
+    imported = 0
+
+    for i, row in enumerate(rows):
+        clean = {k: v for k, v in row.items() if v != ""}
+        try:
+            validated = create_schema.model_validate(clean)
+            data = model_admin.before_create(validated.model_dump(exclude_none=True))
+            if not dry_run:
+                obj = model_admin.model(**data)
+                db.add(obj)
+                await db.flush()
+                imported += 1
+            elif len(preview) < 5:
+                preview.append({"row": i + 1, "data": clean})
+        except Exception as exc:
+            errors.append({"row": i + 1, "error": str(exc)[:300], "data": clean})
+
+    if not dry_run:
+        if errors:
+            await db.rollback()
+        else:
+            await db.commit()
+
+    return {
+        "total": len(rows),
+        "imported": imported,
+        "errors": errors,
+        "dry_run": dry_run,
+        "preview": preview,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -889,11 +996,15 @@ async def get_object(
     model_admin = _get_admin_or_404(model_name)
     payload = getattr(request.state, "token_payload", {})
     _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+    await _enforce_method_caps(model_admin, current_user, payload, "read", db)
 
     obj = (
         await db.execute(select(model_admin.model).where(model_admin.model.id == object_id))
     ).scalar_one_or_none()
     if obj is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Object not found")
+
+    if _model_supports_soft_delete(model_admin) and obj.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Object not found")
 
     rp = policy_engine.check_record_access(current_user, model_admin, obj, payload)
@@ -914,6 +1025,7 @@ async def update_object(
     model_admin = _get_admin_or_404(model_name)
     payload = getattr(request.state, "token_payload", {})
     _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+    await _enforce_method_caps(model_admin, current_user, payload, "update", db)
 
     update_schema = schema_builder.build_update_schema(model_admin)
     body = await request.json()
@@ -970,6 +1082,7 @@ async def delete_object(
         raise HTTPException(status_code=status.HTTP_405_METHOD_NOT_ALLOWED, detail="Deletion not allowed for this model")
     payload = getattr(request.state, "token_payload", {})
     _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+    await _enforce_method_caps(model_admin, current_user, payload, "delete", db)
 
     obj = (
         await db.execute(select(model_admin.model).where(model_admin.model.id == object_id))
@@ -981,11 +1094,89 @@ async def delete_object(
     if not rp.can_delete:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access to this record is denied")
 
+    if _model_supports_soft_delete(model_admin):
+        from adminfoundry.models.base import utcnow
+        obj.deleted_at = utcnow()
+        await db.commit()
+        request.state.audit_action = "deleted"
+        request.state.audit_object_id = str(object_id)
+        request.state.audit_actor = current_user.email
+        await _signals.emit("post_delete", model_name=model_name, object_id=str(object_id), user=current_user)
+        return
+
     await _signals.emit("pre_delete", model_name=model_name, obj=obj, user=current_user)
     await db.delete(obj)
     await db.commit()
 
     request.state.audit_action = "deleted"
+    request.state.audit_object_id = str(object_id)
+    request.state.audit_actor = current_user.email
+    await _signals.emit("post_delete", model_name=model_name, object_id=str(object_id), user=current_user)
+
+
+@router.post("/{model_name}/{object_id}/restore", status_code=status.HTTP_204_NO_CONTENT)
+async def restore_object(
+    model_name: str,
+    object_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_admin_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Restore a soft-deleted record from trash."""
+    model_admin = _get_admin_or_404(model_name)
+    if not _model_supports_soft_delete(model_admin):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Soft-delete not enabled for this model")
+    payload = getattr(request.state, "token_payload", {})
+    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+
+    obj = (
+        await db.execute(
+            select(model_admin.model).where(
+                model_admin.model.id == object_id,
+                model_admin.model.deleted_at.is_not(None),
+            )
+        )
+    ).scalar_one_or_none()
+    if obj is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Object not found or not in trash")
+
+    obj.deleted_at = None
+    await db.commit()
+
+    request.state.audit_action = "restored"
+    request.state.audit_object_id = str(object_id)
+    request.state.audit_actor = current_user.email
+
+
+@router.delete("/{model_name}/{object_id}/hard", status_code=status.HTTP_204_NO_CONTENT)
+async def hard_delete_object(
+    model_name: str,
+    object_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_admin_db),
+    current_user: User = Depends(require_superadmin),
+):
+    """Permanently delete a record — bypasses soft-delete. Superadmin only.
+
+    Use for GDPR hard-delete requests. Emits pre_delete / post_delete signals.
+    """
+    model_admin = _get_admin_or_404(model_name)
+    if not getattr(model_admin, "allow_delete", True):
+        raise HTTPException(status_code=status.HTTP_405_METHOD_NOT_ALLOWED, detail="Deletion not allowed for this model")
+    payload = getattr(request.state, "token_payload", {})
+    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+
+    obj = (
+        await db.execute(select(model_admin.model).where(model_admin.model.id == object_id))
+    ).scalar_one_or_none()
+    if obj is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Object not found")
+
+    await _signals.emit("pre_delete", model_name=model_name, obj=obj, user=current_user)
+    await db.delete(obj)
+    await db.commit()
+
+    request.state.audit_action = "hard_deleted"
     request.state.audit_object_id = str(object_id)
     request.state.audit_actor = current_user.email
     await _signals.emit("post_delete", model_name=model_name, object_id=str(object_id), user=current_user)
@@ -1001,7 +1192,12 @@ def create_coreadmin(app, config=None) -> None:
     _admin_config = config
 
     from adminfoundry.auth_provider import AuthProvider
-    app.state.auth_provider = (config.auth_provider if config else None) or AuthProvider()
+    provider = (config.auth_provider if config else None) or AuthProvider()
+    if config is not None and config.user_model is not None:
+        from adminfoundry.models.protocols import validate_user_model
+        validate_user_model(config.user_model)
+        provider.user_model = config.user_model
+    app.state.auth_provider = provider
 
     if config:
         from adminfoundry import cache as _cache_mod, storage as _storage_mod, i18n as _i18n_mod
@@ -1026,6 +1222,7 @@ def create_coreadmin(app, config=None) -> None:
         "date_pattern": config.default_date_pattern if config else "%Y-%m-%d %H:%M",
         "show_timezone": config.default_show_timezone if config else False,
     }
+    _admin_ui_module._extra_i18n = config.extra_i18n if config else {}
 
     if config is None or config.enable_builtin_ui:
         from adminfoundry.settings import settings

@@ -77,7 +77,6 @@ create_coreadmin(app, config=config)
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/myapp
 SECRET_KEY=change-me-in-production
 ENABLE_BUILTIN_ADMIN_UI=true
-ENABLE_WORKFLOWS=false
 """
 
     for path, content in [(base / "app.py", scaffold), (base / ".env.example", env_example)]:
@@ -164,6 +163,110 @@ async def _create_user(
 
         await session.commit()
         typer.echo(f"User {email} created.")
+
+
+@app.command("seed-roles")
+def seed_roles(
+    grant_admin_all: bool = typer.Option(
+        False, "--grant-admin-all",
+        help="Grant admin role full CRUD on every registered model.",
+    ),
+    grant_user_read: bool = typer.Option(
+        False, "--grant-user-read",
+        help="Grant user role list/read access on every registered model.",
+    ),
+):
+    """Create default global roles (admin, user) if they don't already exist.
+
+    Without flags, only the Role records are created — use the permission matrix
+    in the admin UI to assign capabilities afterwards.
+
+    With flags, RolePermission rows are written for all currently registered models
+    (requires admin_config to be importable so the registry is populated):
+
+    \\b
+        adminfoundry seed-roles --grant-admin-all --grant-user-read
+    """
+    asyncio.run(_seed_roles(grant_admin_all, grant_user_read))
+
+
+async def _seed_roles(grant_admin_all: bool, grant_user_read: bool):
+    from adminfoundry.models.role import Role
+    from adminfoundry.models.role_permission import RolePermission
+
+    role_defs = [
+        ("admin", "Full admin access"),
+        ("user",  "Read-only base role"),
+    ]
+
+    async with AsyncSessionLocal() as session:
+        # 1 — ensure roles exist, collect their IDs
+        role_ids: dict[str, object] = {}
+        created_roles: list[str] = []
+        for name, desc in role_defs:
+            existing = (
+                await session.execute(
+                    select(Role).where(Role.name == name, Role.tenant_id.is_(None))
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                r = Role(name=name, description=desc)
+                session.add(r)
+                await session.flush()
+                role_ids[name] = r.id
+                created_roles.append(name)
+            else:
+                role_ids[name] = existing.id
+        await session.commit()
+
+        if created_roles:
+            typer.echo(f"Created roles: {', '.join(created_roles)}")
+        else:
+            typer.echo("Roles already exist.")
+
+        if not (grant_admin_all or grant_user_read):
+            return
+
+        # 2 — import registry (triggers admin_config registrations)
+        try:
+            import adminfoundry.admin_config  # noqa: F401
+        except ImportError:
+            pass
+        from adminfoundry.admin.registry import admin_site
+        model_names = admin_site.model_names()
+
+        if not model_names:
+            typer.echo("No models registered — run inside the app context.", err=True)
+            return
+
+        grants: list[tuple[str, dict]] = []
+        if grant_admin_all:
+            grants.append(("admin", dict(can_list=True, can_create=True, can_update=True, can_delete=True)))
+        if grant_user_read:
+            grants.append(("user", dict(can_list=True, can_create=False, can_update=False, can_delete=False)))
+
+        async with AsyncSessionLocal() as session:
+            written = 0
+            for role_name, caps in grants:
+                rid = role_ids[role_name]
+                for mn in model_names:
+                    existing = (
+                        await session.execute(
+                            select(RolePermission).where(
+                                RolePermission.role_id == rid,
+                                RolePermission.model_name == mn,
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if existing is None:
+                        session.add(RolePermission(role_id=rid, model_name=mn, **caps))
+                        written += 1
+                    else:
+                        for k, v in caps.items():
+                            setattr(existing, k, v)
+                        written += 1
+            await session.commit()
+        typer.echo(f"Wrote {written} permission rows for {len(model_names)} models.")
 
 
 @app.command("inspect-registry")

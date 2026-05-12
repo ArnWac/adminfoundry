@@ -51,3 +51,16 @@ class TimestampedBase(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )
+
+
+class SoftDeleteMixin:
+    """Opt-in soft-delete column. Use with ModelAdmin(soft_delete=True).
+
+    Records are never removed from the DB; DELETE sets deleted_at instead.
+    All list/detail queries auto-exclude soft-deleted rows unless ?trash=1.
+    Hard permanent delete is available via DELETE /{model}/{id}/hard (superadmin).
+    """
+
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None, index=True
+    )

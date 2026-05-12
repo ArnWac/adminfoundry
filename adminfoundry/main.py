@@ -62,10 +62,6 @@ app.include_router(users.router)
 app.include_router(roles.router)
 app.include_router(tenants.router)
 
-if config.enable_workflows:
-    from adminfoundry.routers import workflow
-    app.include_router(workflow.router)
-
 # Mount user-provided extension routers in registration order
 from adminfoundry.extensions import extension_registry
 for _ext in config.extensions:

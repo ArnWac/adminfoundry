@@ -31,7 +31,19 @@ from adminfoundry.models.user import User
 
 
 class AuthProvider:
-    """Default JWT-based auth provider. Subclass to replace with custom logic."""
+    """Default JWT-based auth provider. Subclass to replace with custom logic.
+
+    user_model: override to use a custom SQLAlchemy user model instead of the
+    built-in User. The model must satisfy validate_user_model() requirements.
+    Set via CoreAdminConfig(user_model=MyUser) — do not import User at class level.
+    """
+
+    user_model: type | None = None
+
+    def _get_user_model(self) -> type:
+        if self.user_model is not None:
+            return self.user_model
+        return User
 
     async def authenticate(self, request: Request, token: str, db: AsyncSession) -> Any:
         """Return the authenticated user or raise HTTP 401."""
@@ -45,8 +57,9 @@ class AuthProvider:
 
         request.state.token_payload = payload
 
+        UserModel = self._get_user_model()
         user_id = payload.get("sub")
-        result = await db.execute(select(User).where(User.id == user_id))
+        result = await db.execute(select(UserModel).where(UserModel.id == user_id))
         user = result.scalar_one_or_none()
 
         if user is None or not user.is_active:

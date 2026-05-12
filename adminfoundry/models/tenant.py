@@ -1,4 +1,4 @@
-from sqlalchemy import String, Boolean
+from sqlalchemy import String, Boolean, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from adminfoundry.models.base import TimestampedBase
 
@@ -20,6 +20,9 @@ class Tenant(TimestampedBase):
     date_format: Mapped[str | None] = mapped_column(String(16), nullable=True)
     # date_pattern: strftime pattern used when date_format = "custom"
     date_pattern: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # IP allowlist: JSON array of CIDR strings, e.g. ["10.0.0.0/8", "203.0.113.5/32"].
+    # Null means unrestricted. Enforced in TenantMiddleware.
+    allowed_cidrs: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     @property
     def schema_name(self) -> str:

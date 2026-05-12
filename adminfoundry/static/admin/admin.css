@@ -199,3 +199,17 @@ td a { color: var(--link); }
 .toast.toast-success { background: #16a34a; }
 .toast.toast-error { background: #dc2626; }
 .toast.toast-info { background: #2563eb; }
+
+/* Fieldset groups in create/edit forms */
+.form-fieldset { border: 1px solid var(--border, #e1e4e8); border-radius: 6px; padding: 1rem 1.25rem; margin: 1.25rem 0; }
+.form-fieldset-legend { font-size: .8rem; font-weight: 600; color: var(--text-muted, #586069); text-transform: uppercase; letter-spacing: .04em; padding: 0 .4rem; }
+
+/* Page header action button group */
+.page-actions { display: flex; gap: .5rem; align-items: center; }
+
+/* Thumbnail in list view for image widget fields */
+.list-image-thumb { max-height: 36px; border-radius: 3px; object-fit: cover; vertical-align: middle; }
+
+/* Import / general modal overlay */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 9000; display: flex; align-items: center; justify-content: center; }
+.modal-dialog { background: var(--surface, #fff); border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,.25); padding: 1.5rem; width: 540px; max-width: 95vw; max-height: 90vh; overflow-y: auto; }

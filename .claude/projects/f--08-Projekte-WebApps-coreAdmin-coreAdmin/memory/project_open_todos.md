@@ -26,15 +26,15 @@ type: project
 
 ## Soft-Delete / Recycle Bin
 
-7. **Soft-Delete** — `deleted_at`-Flag statt Hard-Deletes. Separate Trash-Ansicht pro Model, Restore per Klick. Opt-in per `ModelAdmin(soft_delete=True)`. Alle List/Detail-Queries auto-filtern `WHERE deleted_at IS NULL`.
+7. ✅ **Soft-Delete** — `SoftDeleteMixin` in `models/base.py` (`deleted_at`-Kolumne). `ModelAdmin(soft_delete=True)`. DELETE setzt `deleted_at` statt Hard-Delete. `GET ?trash=1` zeigt nur gelöschte Records. `POST /{model}/{id}/restore` stellt wieder her. `DELETE /{model}/{id}/hard` löscht permanent (Superadmin). UI: Papierkorb-Button in Listenansicht, Restore/Hard-Delete-Buttons im Trash-Modus.
 
-   **DSGVO-Pflichtanforderungen:**
-   - Soft-delete erfüllt **nicht** das Recht auf Löschung (Art. 17 DSGVO) — personenbezogene Daten müssen bei Löschungsantrag hart gelöscht oder anonymisiert werden.
-   - Zwingend: separater **Hard-Delete**-Button (Superadmin-only) für GDPR-Anfragen — löscht Record permanent + anonymisiert betroffene Audit-Log-Einträge.
-   - **Anonymize-on-request**: PII-Felder (E-Mail, Name etc.) in soft-deleted Records durch Platzhalter ersetzen (`anonymized@gdpr.invalid`).
-   - **Retention Policy**: `soft_delete_retention_days` auf ModelAdmin — konfigurierbare automatische Bereinigung nach X Tagen.
-   - **Audit-Log**: GDPR-Delete-Workflow sollte E-Mail/Namen im Audit-Log durch pseudonymisierte ID ersetzen.
+   **DSGVO-Offen:**
+   - **Anonymize-on-request**: PII-Felder in soft-deleted Records durch Platzhalter ersetzen (`anonymized@gdpr.invalid`).
+   - **Retention Policy**: `soft_delete_retention_days` auf ModelAdmin — automatische Bereinigung nach X Tagen.
+   - **Audit-Log-Anonymisierung**: GDPR-Delete-Workflow sollte E-Mail/Namen im Audit-Log pseudonymisieren.
 
 ## Erweiterbarkeit / Public Package
 
-8. **Pluggable User-Model (Option B)** — `create_adminfoundry(app, config=CoreAdminConfig(user_model=MyUser))` ermöglichen. adminfoundry prüft übergebenes Model gegen ein `UserProtocol` (Pflichtfelder: `email`, `is_active`, `is_superadmin`, `id`). Erst relevant bei öffentlicher Veröffentlichung.
+8. ✅ **Pluggable User-Model** — `CoreAdminConfig(user_model=MyUser)`. `AuthProvider.user_model` überschreibbar. `validate_user_model()` in `models/protocols.py` prüft Pflichtfelder (`id`, `email`, `is_active`, `is_superadmin`). `create_coreadmin` validiert + setzt `provider.user_model` beim Start.
+
+   **DSGVO-Offen (aus Item 7):** Anonymize-on-request, Retention Policy, Audit-Log-Pseudonymisierung.

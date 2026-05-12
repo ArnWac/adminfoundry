@@ -43,6 +43,7 @@ def _serialize(tenant: Tenant) -> str:
         "language": tenant.language,
         "date_format": tenant.date_format,
         "date_pattern": tenant.date_pattern,
+        "allowed_cidrs": tenant.allowed_cidrs,
     })
 
 
@@ -59,6 +60,7 @@ def _deserialize(raw: str) -> SimpleNamespace | None:
         language=data.get("language"),
         date_format=data.get("date_format"),
         date_pattern=data.get("date_pattern"),
+        allowed_cidrs=data.get("allowed_cidrs"),
         schema_name=f"tenant_{data['slug']}",
     )
 
@@ -124,6 +126,29 @@ class TenantMiddleware(BaseHTTPMiddleware):
                     status_code=403,
                     content={"detail": "Tenant is disabled"},
                 )
+            if tenant.allowed_cidrs:
+                import ipaddress, json as _json
+                client_ip = request.client.host if request.client else None
+                # No client IP resolvable → fail closed when allowlist is set
+                if not client_ip:
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "Access denied: client IP could not be determined"},
+                    )
+                try:
+                    cidrs = _json.loads(tenant.allowed_cidrs)
+                except (ValueError, TypeError):
+                    cidrs = [c.strip() for c in tenant.allowed_cidrs.splitlines() if c.strip()]
+                addr = ipaddress.ip_address(client_ip)
+                if not any(
+                    addr in ipaddress.ip_network(c, strict=False)
+                    for c in cidrs
+                    if c
+                ):
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "Access denied: IP not in tenant allowlist"},
+                    )
             request.state.tenant = tenant
         else:
             request.state.tenant = None

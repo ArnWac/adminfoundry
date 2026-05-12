@@ -40,6 +40,12 @@ class Serializer:
                     for col in related.__table__.columns
                     if col.name not in excluded
                 }
+        for fname, fn in getattr(model_admin, "computed_fields", {}).items():
+            try:
+                result[fname] = _serialize_value(fn(obj))
+            except Exception:
+                result[fname] = None
+
         return result
 
     def serialize_many(self, objs: list, model_admin: ModelAdmin) -> list[dict]:

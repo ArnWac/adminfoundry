@@ -101,6 +101,7 @@ def build_field_metadata(model_admin: ModelAdmin, registry=None) -> list[FieldMe
             relation = _relation_meta(fk, registry)
 
         choices_url = getattr(model_admin, "field_choices_urls", {}).get(name)
+        widget_override = getattr(model_admin, "widget_overrides", {}).get(name)
         fields.append(FieldMeta(
             name=name,
             label=_prettify(name),
@@ -113,9 +114,26 @@ def build_field_metadata(model_admin: ModelAdmin, registry=None) -> list[FieldMe
             searchable=name in search_set,
             filterable=name in filter_set,
             sortable=True,
-            widget="choices-select" if choices_url else _widget(ft, relation is not None),
+            widget=widget_override or ("choices-select" if choices_url else _widget(ft, relation is not None)),
             relation=relation,
             choices_url=choices_url,
+        ))
+
+    # Computed virtual fields (read-only, callable(obj) at serialize time)
+    for fname in getattr(model_admin, "computed_fields", {}):
+        fields.append(FieldMeta(
+            name=fname,
+            label=_prettify(fname),
+            field_type="string",
+            required=False,
+            nullable=True,
+            has_default=True,
+            readonly=True,
+            in_list=fname in list_set,
+            searchable=False,
+            filterable=False,
+            sortable=False,
+            widget="text",
         ))
 
     # Virtual create-only fields (e.g. plain-text password before hashing)
@@ -198,6 +216,9 @@ def build_model_contract(model_admin: ModelAdmin, registry=None) -> ModelContrac
         create_redirect=getattr(model_admin, "create_redirect", "list"),
         permission_matrix=getattr(model_admin, "permission_matrix", False),
         allow_delete=getattr(model_admin, "allow_delete", True),
+        soft_delete=getattr(model_admin, "soft_delete", False),
+        fieldsets=getattr(model_admin, "fieldsets", None),
+        allow_import=getattr(model_admin, "allow_import", False),
     )
 
 

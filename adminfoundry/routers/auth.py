@@ -33,6 +33,7 @@ from adminfoundry.services.session_security import session_security
 from adminfoundry.settings import settings
 from adminfoundry.token_blacklist import blacklist_token, is_blacklisted
 from adminfoundry.login_security import is_locked, record_failure, clear_failures
+from adminfoundry import signals as _signals
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -102,6 +103,7 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
     ua = request.headers.get("user-agent")
     session_security.register(payload["jti"], user.id, exp, ip_address=ip, user_agent=ua)
 
+    await _signals.emit("post_login", user=user, request=request)
     return LoginResponse(access_token=access_token, refresh_token=refresh_token)
 
 
@@ -136,6 +138,7 @@ async def verify_2fa(
     ua = request.headers.get("user-agent")
     session_security.register(token_payload["jti"], user.id, exp, ip_address=ip, user_agent=ua)
 
+    await _signals.emit("post_login", user=user, request=request)
     return LoginResponse(access_token=access_token, refresh_token=refresh_token)
 
 
@@ -238,7 +241,7 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
     request: Request,
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Revoke the current access token by blacklisting its JTI."""
@@ -248,6 +251,7 @@ async def logout(
     if jti:
         await blacklist_token(jti, exp, db)
     await db.commit()
+    await _signals.emit("post_logout", user=current_user, request=request)
 
 
 @router.get("/me", response_model=UserPublic)
