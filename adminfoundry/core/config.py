@@ -18,13 +18,26 @@ class CoreAdminConfig:
     Defaults produce a minimal core installation — optional extensions are off.
     Disabled features do not mount routers, expose metadata, or import heavy deps.
 
-    Example::
+    Package-user example (no env vars required)::
 
         config = CoreAdminConfig(
-            enable_builtin_ui=True,
+            database_url="sqlite+aiosqlite:///./app.db",
+            secret_key="my-secret",
             enable_multi_tenant=False,
         )
+        app = create_admin(config=config, title="My Admin")
+
+    Env-backed convenience::
+
+        config = CoreAdminConfig.from_env(enable_multi_tenant=True, tenant_resolution="subdomain")
+        app = create_admin(config=config, title="My SaaS Admin")
     """
+
+    # Database — if set, create_admin() configures the engine from this URL.
+    # When None the engine is lazily initialised from DATABASE_URL env / settings.
+    database_url: str | None = None
+    # JWT secret — if set, overrides SECRET_KEY env / settings for token signing.
+    secret_key: str | None = None
 
     # Core features
     enable_builtin_ui: bool = True
@@ -91,15 +104,45 @@ class CoreAdminConfig:
         )
 
     @classmethod
-    def from_settings(cls, settings: Any) -> CoreAdminConfig:
-        """Build config from the env-backed Settings object."""
-        return cls(
+    def from_settings(cls, settings: Any, **overrides) -> "CoreAdminConfig":
+        """Build config from the env-backed Settings object.
+
+        Explicit keyword overrides always win over values loaded from settings::
+
+            config = CoreAdminConfig.from_settings(
+                settings,
+                enable_multi_tenant=True,
+                tenant_resolution="subdomain",
+                extensions=[WorkflowsExtension()],
+            )
+        """
+        base: dict = dict(
+            database_url=getattr(settings, "DATABASE_URL", None),
+            secret_key=getattr(settings, "SECRET_KEY", None),
             enable_builtin_ui=getattr(settings, "ENABLE_BUILTIN_ADMIN_UI", True),
             enable_multi_tenant=getattr(settings, "MULTI_TENANT", False),
             tenant_resolution=getattr(settings, "TENANT_RESOLUTION_STRATEGY", "header"),
             auth_provider=None,
             include_auth_routes=True,
         )
+        base.update(overrides)
+        return cls(**base)
+
+    @classmethod
+    def from_env(cls, **overrides) -> "CoreAdminConfig":
+        """Build config from environment variables; explicit kwargs always win.
+
+        Reads DATABASE_URL, SECRET_KEY, MULTI_TENANT, TENANT_RESOLUTION_STRATEGY,
+        and ENABLE_BUILTIN_ADMIN_UI from the environment (via pydantic-settings).
+        Explicit overrides always take precedence::
+
+            config = CoreAdminConfig.from_env(
+                enable_multi_tenant=True,
+                tenant_resolution="subdomain",
+            )
+        """
+        from adminfoundry.settings import settings as _s
+        return cls.from_settings(_s, **overrides)
 
     def enabled_extension_names(self) -> list[str]:
         """Return the names of all enabled user-provided extensions."""
@@ -110,10 +153,12 @@ class CoreAdminConfig:
         ]
 
     def to_safe_dict(self) -> dict:
-        """UI-safe representation for admin contract and diagnostics."""
+        """UI-safe representation for admin contract and diagnostics. Never exposes secrets."""
         return {
             "enable_builtin_ui": self.enable_builtin_ui,
             "enable_multi_tenant": self.enable_multi_tenant,
             "tenant_resolution": self.tenant_resolution,
             "enabled_extensions": self.enabled_extension_names(),
+            "database_url_set": self.database_url is not None,
+            "secret_key_set": self.secret_key is not None,
         }

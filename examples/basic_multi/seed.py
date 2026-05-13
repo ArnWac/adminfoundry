@@ -8,8 +8,8 @@ import examples.basic_multi.database  # noqa: F401 — set env vars
 
 from sqlalchemy import select
 
+import adminfoundry.database as _db
 from adminfoundry.auth import hash_password
-from adminfoundry.database import AsyncSessionLocal, engine
 from adminfoundry.models import Role, Tenant, User, user_roles
 from adminfoundry.models.base import Base
 
@@ -28,10 +28,10 @@ TENANT_ADMIN_PASSWORD = "admin123"  # demo only
 
 
 async def seed() -> None:
-    async with engine.begin() as conn:
+    async with _db.engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    async with AsyncSessionLocal() as session:
+    async with _db.AsyncSessionLocal() as session:
         # Superadmin
         existing = (await session.execute(
             select(User).where(User.email == SUPERADMIN_EMAIL)

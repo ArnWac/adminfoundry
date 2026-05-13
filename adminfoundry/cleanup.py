@@ -4,7 +4,6 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete
 
-from adminfoundry.database import AsyncSessionLocal
 from adminfoundry.models.revoked_token import RevokedToken
 from adminfoundry.models.password_reset_token import PasswordResetToken
 from adminfoundry.models.audit_log import AuditLog
@@ -13,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 async def _run_cleanup() -> None:
+    from adminfoundry.database import AsyncSessionLocal
     from adminfoundry.settings import settings
     async with AsyncSessionLocal() as db:
         now = datetime.now(timezone.utc)

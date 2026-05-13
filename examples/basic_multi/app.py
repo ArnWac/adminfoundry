@@ -11,23 +11,25 @@ Then visit:
 
 *.localhost is resolved to 127.0.0.1 automatically on modern OSes.
 """
+import os
 from contextlib import asynccontextmanager
-
-import examples.basic_multi.database  # noqa: F401 — set DATABASE_URL before other imports
 
 from fastapi import FastAPI
 
 import examples.basic_multi.admin_config  # noqa: F401 — register admins
+
 from adminfoundry import create_admin, CoreAdminConfig
 from adminfoundry.extensions.workflows import WorkflowsExtension
-from adminfoundry.settings import settings
 from examples.basic_multi.seed import seed, print_banner
 
 
-config = CoreAdminConfig.from_settings(settings)
-config.enable_multi_tenant = True
-config.tenant_resolution = "subdomain"
-config.extensions.append(WorkflowsExtension())
+config = CoreAdminConfig(
+    database_url=os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./basic_multi.db"),
+    secret_key=os.environ.get("SECRET_KEY", "dev-secret"),
+    enable_multi_tenant=True,
+    tenant_resolution="subdomain",
+    extensions=[WorkflowsExtension()],
+)
 
 
 @asynccontextmanager

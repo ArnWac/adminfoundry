@@ -255,11 +255,20 @@ async def test_ui_base_in_list_template(client):
 @pytest.mark.asyncio
 async def test_api_unaffected_when_ui_disabled(db_engine):
     """Disabling the built-in UI must not break API routes."""
-    with patch("adminfoundry.settings.settings.ENABLE_BUILTIN_ADMIN_UI", False):
-        import importlib
-        import examples.basic_multi.app as m
-        importlib.reload(m)
-        disabled_app = m.app
+    import adminfoundry.admin.router as _router
+    from adminfoundry import create_admin, CoreAdminConfig
+
+    _saved_config = _router._admin_config
+    _saved_widgets = _router._extension_widgets
+
+    # No database_url so configure() is not called and the shared test engine is not replaced.
+    disabled_app = create_admin(
+        config=CoreAdminConfig(enable_builtin_ui=False),
+        title="test-api-no-ui",
+    )
+
+    _router._admin_config = _saved_config
+    _router._extension_widgets = _saved_widgets
 
     transport = ASGITransport(app=disabled_app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -270,11 +279,21 @@ async def test_api_unaffected_when_ui_disabled(db_engine):
 @pytest.mark.asyncio
 async def test_ui_routes_absent_when_disabled(db_engine):
     """When UI disabled, /admin-ui/login should 404."""
-    with patch("adminfoundry.settings.settings.ENABLE_BUILTIN_ADMIN_UI", False):
-        import importlib
-        import examples.basic_multi.app as m
-        importlib.reload(m)
-        disabled_app = m.app
+    import adminfoundry.admin.router as _router
+    from adminfoundry import create_admin, CoreAdminConfig
+
+    # Save and restore module-level globals so this test does not corrupt the shared app state.
+    _saved_config = _router._admin_config
+    _saved_widgets = _router._extension_widgets
+
+    # No database_url so configure() is not called and the shared test engine is not replaced.
+    disabled_app = create_admin(
+        config=CoreAdminConfig(enable_builtin_ui=False),
+        title="test-no-ui",
+    )
+
+    _router._admin_config = _saved_config
+    _router._extension_widgets = _saved_widgets
 
     transport = ASGITransport(app=disabled_app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:

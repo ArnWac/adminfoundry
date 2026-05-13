@@ -8,11 +8,14 @@ import uuid
 from sqlalchemy import select
 from starlette.requests import Request
 
-from adminfoundry.database import AsyncSessionLocal
 from adminfoundry.models.tenant import Tenant
 from adminfoundry.schemas.tenant import RESERVED_SLUGS
 from adminfoundry.settings import settings
 from adminfoundry.tenancy.context import TenantContext
+
+# Module-level sentinel: tests can patch this attribute to inject a fake session factory.
+# When None the resolver imports the live AsyncSessionLocal from database at call time.
+AsyncSessionLocal = None
 
 _TENANT_TTL = 30  # seconds
 _REDIS_PREFIX = "tenant:"
@@ -85,7 +88,10 @@ async def resolve_tenant(request: Request) -> TenantContext | None:
         hit, ctx = _mem_get(slug)
 
     if not hit:
-        async with AsyncSessionLocal() as session:
+        _session_local = AsyncSessionLocal  # may be patched in tests
+        if _session_local is None:
+            from adminfoundry.database import AsyncSessionLocal as _session_local
+        async with _session_local() as session:
             result = await session.execute(select(Tenant).where(Tenant.slug == slug))
             tenant = result.scalar_one_or_none()
         ctx = TenantContext.from_orm(tenant) if tenant is not None else None

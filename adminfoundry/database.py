@@ -11,6 +11,24 @@ engine = create_async_engine(settings.DATABASE_URL, **_engine_kwargs)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
+def configure(database_url: str, debug: bool = False) -> None:
+    """Reconfigure the database engine from an explicit URL.
+
+    Called by create_admin() when CoreAdminConfig.database_url is set, allowing
+    package users to configure the engine without environment variables.
+    """
+    global engine, AsyncSessionLocal
+    kw: dict = {"echo": debug}
+    if "postgresql" in database_url:
+        kw.update({"pool_size": 10, "max_overflow": 20, "pool_pre_ping": True})
+    engine = create_async_engine(database_url, **kw)
+    AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
+
+def _ensure_configured() -> None:
+    """No-op: engine is always initialized eagerly. Kept for API compatibility."""
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         try:

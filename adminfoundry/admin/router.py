@@ -1255,6 +1255,19 @@ def create_admin(
 
 
 def _setup_state(app, config) -> None:
+    # Apply explicit database_url / secret_key from config before anything uses settings.
+    if config.database_url is not None:
+        settings.DATABASE_URL = config.database_url
+        import adminfoundry.database as _db
+        _db.configure(config.database_url, debug=settings.DEBUG)
+    else:
+        # Ensure lazy init resolves from the current settings so the engine is ready.
+        import adminfoundry.database as _db
+        _db._ensure_configured()
+
+    if config.secret_key is not None:
+        settings.SECRET_KEY = config.secret_key
+
     from adminfoundry.auth_provider import AuthProvider
     provider = config.auth_provider or AuthProvider()
     if config.user_model is not None:

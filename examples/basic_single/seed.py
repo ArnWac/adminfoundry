@@ -5,8 +5,8 @@ import examples.basic_single.database  # noqa: F401 — set DATABASE_URL
 
 from sqlalchemy import select
 
+import adminfoundry.database as _db
 from adminfoundry.auth import hash_password
-from adminfoundry.database import AsyncSessionLocal, engine
 from adminfoundry.models import User
 from adminfoundry.models.base import Base
 
@@ -19,10 +19,10 @@ ADMIN_PASSWORD = "admin123"  # demo only
 
 
 async def seed() -> None:
-    async with engine.begin() as conn:
+    async with _db.engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    async with AsyncSessionLocal() as session:
+    async with _db.AsyncSessionLocal() as session:
         existing = (await session.execute(
             select(User).where(User.email == ADMIN_EMAIL)
         )).scalars().first()
