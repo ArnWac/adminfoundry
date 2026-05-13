@@ -116,10 +116,11 @@ def test_contract_snapshot_user_admin():
     assert "is_active" in contract.filter_fields
     assert "id" in contract.readonly_fields
 
-    # Actions snapshot — UserAdmin has DeactivateUsersAction + BulkDeleteAction
-    assert len(contract.actions) == 2
+    # Actions snapshot — UserAdmin has Deactivate + Activate + BulkDelete
+    assert len(contract.actions) == 3
     action_names = {a.name for a in contract.actions}
     assert "deactivate" in action_names
+    assert "activate" in action_names
     assert "delete" in action_names
     deactivate = next(a for a in contract.actions if a.name == "deactivate")
     assert deactivate.danger is True

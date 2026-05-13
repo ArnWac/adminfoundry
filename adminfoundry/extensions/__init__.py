@@ -1,4 +1,4 @@
-"""coreAdmin extension architecture.
+"""adminfoundry extension architecture.
 
 Extensions add optional capabilities (jobs, import/export, workflows, etc.)
 without bloating the core package.  Each extension declares routers, models,
@@ -17,7 +17,7 @@ from typing import Any
 
 
 class ExtensionBase(ABC):
-    """Base class for all coreAdmin extensions.
+    """Base class for all adminfoundry extensions.
 
     Subclass this and override the methods you need.  All methods have safe
     no-op defaults so extensions can declare only what they provide.
@@ -62,7 +62,7 @@ class ExtensionBase(ABC):
     def startup_check(self) -> None:
         """Raise RuntimeError if the extension cannot start.
 
-        Called during app startup (or coreadmin extensions check).
+        Called during app startup (or adminfoundry extensions check).
         If is_optional is False and this raises, the app refuses to start.
         """
 

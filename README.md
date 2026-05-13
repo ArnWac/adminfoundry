@@ -1,10 +1,8 @@
 # adminfoundry
 
-> **Alpha / experimental.** API and features may change without notice.
+adminfoundry is a contract-driven FastAPI admin framework for SQLAlchemy applications. The current focus is a stable core API, predictable admin contracts, and a lightweight built-in UI.
 
-A contract-driven FastAPI admin framework with built-in security and first-class multi-tenancy.
-
-Register your SQLAlchemy models declaratively and get a full admin interface — CRUD, bulk actions, audit log, role-based access, optional multi-tenant isolation, a built-in lightweight UI, and a renderer-independent contract API.
+Register your SQLAlchemy models declaratively and get a generated admin: CRUD routes, bulk actions, audit log, role-based access, optional multi-tenant scoping, a built-in lightweight UI, and a renderer-independent contract API for external clients.
 
 ---
 
@@ -32,7 +30,10 @@ from fastapi import FastAPI
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import String
 
-from adminfoundry import create_admin, CoreAdminConfig, ModelAdmin, admin_site
+from adminfoundry import (
+    create_admin, CoreAdminConfig, ModelAdmin, admin_site,
+    BulkDeleteAction,
+)
 from adminfoundry.models.base import TimestampedBase
 
 
@@ -48,6 +49,7 @@ class ArticleAdmin(ModelAdmin):
     search_fields   = ["title"]
     filter_fields   = ["published"]
     readonly_fields = ["id", "created_at", "updated_at"]
+    actions         = [BulkDeleteAction()]
 
 
 admin_site.register(ArticleAdmin())
@@ -56,7 +58,29 @@ app = FastAPI()
 create_admin(app, config=CoreAdminConfig())
 ```
 
-See [`examples/basic_single_tenant/`](examples/basic_single_tenant/) for a runnable version.
+See [`examples/basic_single/`](examples/basic_single/) for a runnable version.
+
+---
+
+## Register your first model
+
+1. Define a SQLAlchemy model that inherits from `TimestampedBase` (gives you `id`, `created_at`, `updated_at`).
+2. Subclass `ModelAdmin` and set `model = YourModel`. Pick `list_display`, `search_fields`, `filter_fields`, `readonly_fields`.
+3. Call `admin_site.register(YourAdmin())` at import time.
+4. Call `create_admin(app, config=CoreAdminConfig())` after your routers are mounted.
+
+Common attributes:
+
+| Attribute | Purpose |
+|-----------|---------|
+| `list_display` | Columns shown in list view. |
+| `search_fields` | Fields the search box matches against. |
+| `filter_fields` | Fields exposed as filters. |
+| `readonly_fields` | Fields rejected on create/update. |
+| `protected_fields` | Fields excluded from list / detail / contract payloads. |
+| `actions` | List of `AdminAction` instances available for bulk/single operations. |
+| `tenant_scoped` | If True, list/detail are filtered by the active tenant. |
+| `computed_fields` | Dict of `name → callable(obj)` for derived list columns. |
 
 ---
 
@@ -71,33 +95,42 @@ app.add_middleware(TenantMiddleware)   # resolves tenant from subdomain or X-Ten
 create_admin(app, config=CoreAdminConfig(enable_multi_tenant=True))
 ```
 
-See [`examples/basic_multi_tenant/`](examples/basic_multi_tenant/) for a runnable version.
+See [`examples/basic_multi/`](examples/basic_multi/) for a runnable subdomain-based SaaS example.
+
+Multi-tenancy ships with two strategies: row-level (every `tenant_scoped` model carries `tenant_id`) and schema-level (one PostgreSQL schema per tenant). Row-level is covered by tests. Schema-level is wired but lacks end-to-end PostgreSQL test coverage — see the roadmap below.
 
 ---
 
-## Feature Status
+## Feature status
 
-| Feature | Status |
-|---------|--------|
-| CRUD routes (list, detail, create, update, delete) | ✅ Implemented |
-| Bulk actions | ✅ Implemented |
-| Renderer-independent contract API | ✅ Implemented |
-| Built-in lightweight admin UI | ✅ Implemented |
-| JWT authentication | ✅ Implemented |
-| Role-based access control | ✅ Implemented |
-| Per-model field policies | ✅ Implemented |
-| Multi-tenancy (subdomain / header) | ✅ Implemented |
-| Audit log | ✅ Implemented |
-| CSV import | ✅ Implemented |
-| Computed / virtual fields | ✅ Implemented |
-| Soft delete | ✅ Implemented |
-| Dashboard widgets | ✅ Implemented |
-| Signals & webhooks | ✅ Implemented |
-| i18n / locale support | ✅ Implemented |
-| Approval workflow | ⚠️ Backend only (UI pending) |
-| Background jobs | ⚠️ Extension (opt-in) |
-| SCIM / SAML | ❌ Not implemented |
-| Flutter UI | ❌ Not implemented |
+| Stable | Experimental | Planned |
+|--------|--------------|---------|
+| Registry / `ModelAdmin` | Multi-tenancy (SQLite-tested only) | PostgreSQL schema multi-tenancy (end-to-end) |
+| Dynamic schema builder + serializer | Approval workflow (backend only) | SCIM / SAML |
+| CRUD routes | Webhooks / signals | Flutter / external UI |
+| Contract API (`/api/v1/admin/...`) | Dashboard widgets | Billing / metering |
+| Protected field handling | Background jobs extension | White-labeling |
+| JWT auth + RBAC | CSV import | Advanced workflow approvals |
+| Built-in lightweight UI | Soft delete | |
+| Common actions (`adminfoundry.actions`) | Computed fields | |
+| Audit log | i18n / locale | |
+
+Stable features have tests and runnable examples. Experimental features work in the happy path but lack one or more of: real-PostgreSQL coverage, end-to-end UI, or stability guarantees across releases.
+
+---
+
+## Roadmap / Next milestone — PostgreSQL schema-based tenancy
+
+The next milestone is full PostgreSQL schema-based multi-tenancy. Scope:
+
+- Shared schema (users, roles, tenants, audit log) and one schema per tenant for domain data.
+- Alembic configs for both: `alembic_shared.ini` (exists) and `alembic_tenant.ini` (exists, skeletal).
+- Integration tests against a real PostgreSQL service.
+- Tenant isolation tests (one tenant cannot read or write rows of another).
+- Schema creation + seeding on tenant creation, including initial Alembic stamp.
+- Tenant-aware async session factory cached per schema with `search_path` injection-safe.
+
+See [`docs/roadmap-postgres-tenancy.md`](docs/roadmap-postgres-tenancy.md) for the full plan and current limitations.
 
 ---
 
@@ -105,11 +138,17 @@ See [`examples/basic_multi_tenant/`](examples/basic_multi_tenant/) for a runnabl
 
 | Example | Description |
 |---------|-------------|
-| [`examples/basic_single_tenant/`](examples/basic_single_tenant/) | Minimal single-tenant integration |
-| [`examples/basic_multi_tenant/`](examples/basic_multi_tenant/) | Minimal multi-tenant integration |
-| [`examples/default/`](examples/default/) | Full-featured reference (all middleware + extensions) |
-| [`examples/blog/`](examples/blog/) | Blog with computed fields, publish action |
-| [`examples/saas/`](examples/saas/) | SaaS multi-tenant with demo tenants |
+| [`examples/basic_single/`](examples/basic_single/) | Single-tenant blog: `PostAdmin` (computed fields, bulk delete) + minimal `UserAdmin`. |
+| [`examples/basic_multi/`](examples/basic_multi/) | Multi-tenant SaaS: `UserAdmin`, `RoleAdmin`, `TenantAdmin`, `AuditLogAdmin`, plus tenant-scoped `ProjectAdmin`. Seeds 1 superadmin + 2 tenants + 2 tenant admins. |
+
+Run them:
+
+```bash
+make dev-single   # uvicorn examples.basic_single.app:app
+make dev-multi    # uvicorn examples.basic_multi.app:app
+```
+
+Both print demo credentials on startup.
 
 ---
 
@@ -120,28 +159,42 @@ See [`examples/basic_multi_tenant/`](examples/basic_multi_tenant/) for a runnabl
 - [Security](docs/security.md)
 - [ModelAdmin configuration](docs/model-admin.md)
 - [Protected fields](docs/protected-fields.md)
+- [Roadmap — PostgreSQL schema tenancy](docs/roadmap-postgres-tenancy.md)
 
 ---
 
 ## CLI
 
 ```bash
-adminfoundry create-superadmin   # interactive superadmin creation
-adminfoundry inspect-registry    # list registered models + fields
-adminfoundry doctor              # check DB connectivity and config
-adminfoundry init-roles          # seed default admin/user roles
+adminfoundry init [dir]                 # scaffold a minimal app
+adminfoundry create-superadmin          # interactive superadmin creation
+adminfoundry create-user                # create a regular user, optionally with a role
+adminfoundry seed-roles [--grant-...]   # seed default admin/user roles
+adminfoundry inspect-registry           # list registered models + fields + actions
+adminfoundry doctor                     # DB connectivity + registry + extensions health
+adminfoundry db check                   # check DB connectivity
+adminfoundry db upgrade [--env]         # run alembic upgrade head
+adminfoundry migrate generate -m "..."  # alembic revision --autogenerate
+adminfoundry migrate apply              # alembic upgrade head
+adminfoundry migrate status             # current revision + heads
+adminfoundry extensions list            # list registered extensions
+adminfoundry extensions check           # run startup_check() on each
+adminfoundry tenant migrate <slug>      # create PG schema for a tenant
+adminfoundry tenant upgrade --all       # run tenant schema migrations for all active tenants
 ```
+
+`adminfoundry doctor` and `adminfoundry inspect-registry` work without an admin app — but they only see models you have already imported. Run them inside your application's process or after `python -c "import myapp.admin_config"`.
 
 ---
 
 ## Environment
 
-Key variables (see `.env.example`):
+Key variables (see [`.env.example`](.env.example)):
 
 ```
 DATABASE_URL=postgresql+asyncpg://...
 SECRET_KEY=...
 MULTI_TENANT=false
-TENANT_RESOLUTION_STRATEGY=header   # or: subdomain
+TENANT_RESOLUTION_STRATEGY=header    # or: subdomain
 ADMIN_UI_PATH=/admin-ui
 ```

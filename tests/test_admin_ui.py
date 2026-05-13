@@ -19,7 +19,7 @@ from adminfoundry.admin.registry import admin_site
 
 
 # ---------------------------------------------------------------------------
-# Renderer support matrix — unit tests
+# Renderer support matrix â€” unit tests
 # ---------------------------------------------------------------------------
 
 def test_support_matrix_structure():
@@ -66,7 +66,7 @@ def test_support_matrix_quality_flags():
 def _make_app_enabled():
     """Return a fresh app with ENABLE_BUILTIN_ADMIN_UI=True."""
     import importlib
-    import examples.default.app as m
+    import examples.basic_multi.app as m
     importlib.reload(m)
     return m.app
 
@@ -75,13 +75,13 @@ def _make_app_disabled():
     """Return a fresh app with ENABLE_BUILTIN_ADMIN_UI=False."""
     with patch("adminfoundry.settings.settings.ENABLE_BUILTIN_ADMIN_UI", False):
         import importlib
-        import examples.default.app as m
+        import examples.basic_multi.app as m
         importlib.reload(m)
         return m.app
 
 
 # ---------------------------------------------------------------------------
-# HTML shell routes — enabled (default)
+# HTML shell routes â€” enabled (default)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -169,7 +169,7 @@ async def test_static_js_served(client):
 
 
 # ---------------------------------------------------------------------------
-# Renderer support matrix — HTTP endpoint
+# Renderer support matrix â€” HTTP endpoint
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -184,7 +184,7 @@ async def test_support_matrix_endpoint(client):
 
 
 # ---------------------------------------------------------------------------
-# Accessibility — ARIA labels and lang attribute in templates
+# Accessibility â€” ARIA labels and lang attribute in templates
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -214,7 +214,7 @@ async def test_base_template_skip_link(client):
 
 
 # ---------------------------------------------------------------------------
-# Security — no protected fields in HTML shells
+# Security â€” no protected fields in HTML shells
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -233,7 +233,7 @@ async def test_list_page_no_secrets(client):
 
 
 # ---------------------------------------------------------------------------
-# Template context — ui_base injected correctly
+# Template context â€” ui_base injected correctly
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -249,7 +249,7 @@ async def test_ui_base_in_list_template(client):
 
 
 # ---------------------------------------------------------------------------
-# Disabled UI — API routes unaffected
+# Disabled UI â€” API routes unaffected
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -257,7 +257,7 @@ async def test_api_unaffected_when_ui_disabled(db_engine):
     """Disabling the built-in UI must not break API routes."""
     with patch("adminfoundry.settings.settings.ENABLE_BUILTIN_ADMIN_UI", False):
         import importlib
-        import examples.default.app as m
+        import examples.basic_multi.app as m
         importlib.reload(m)
         disabled_app = m.app
 
@@ -272,7 +272,7 @@ async def test_ui_routes_absent_when_disabled(db_engine):
     """When UI disabled, /admin-ui/login should 404."""
     with patch("adminfoundry.settings.settings.ENABLE_BUILTIN_ADMIN_UI", False):
         import importlib
-        import examples.default.app as m
+        import examples.basic_multi.app as m
         importlib.reload(m)
         disabled_app = m.app
 
@@ -283,7 +283,7 @@ async def test_ui_routes_absent_when_disabled(db_engine):
 
 
 # ---------------------------------------------------------------------------
-# Regression — Phase 0–6 API routes still work
+# Regression â€” Phase 0â€“6 API routes still work
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio

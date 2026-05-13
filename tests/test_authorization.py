@@ -1,4 +1,4 @@
-"""Phase 10 — Fine-grained authorization and policy engine tests (fast layer).
+"""Phase 10 â€” Fine-grained authorization and policy engine tests (fast layer).
 
 Covers:
 - Policy engine: field visibility/editability, record filter, record access, action policy
@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 
 # ---------------------------------------------------------------------------
-# Helpers — mock users and model admins
+# Helpers â€” mock users and model admins
 # ---------------------------------------------------------------------------
 
 def _make_superadmin():
@@ -94,7 +94,7 @@ def test_roles_allow_missing_role():
 
 
 # ---------------------------------------------------------------------------
-# Policy engine — superadmin bypass
+# Policy engine â€” superadmin bypass
 # ---------------------------------------------------------------------------
 
 def test_privileged_superadmin_non_impersonated():
@@ -129,7 +129,7 @@ def test_evaluate_field_impersonated_superadmin_downgraded():
 
 
 # ---------------------------------------------------------------------------
-# Policy engine — field policies
+# Policy engine â€” field policies
 # ---------------------------------------------------------------------------
 
 def test_field_policy_no_restriction():
@@ -140,7 +140,7 @@ def test_field_policy_no_restriction():
 
 
 def test_field_policy_view_only_edit_denied():
-    """edit_roles=[] → can view but cannot edit (view_roles unrestricted)."""
+    """edit_roles=[] â†’ can view but cannot edit (view_roles unrestricted)."""
     pe = PolicyEngine()
     admin = _make_admin(field_policies={"name": {"view_roles": None, "edit_roles": []}})
     fp = pe.evaluate_field(_make_user(["manager"]), admin, "name", {})
@@ -149,7 +149,7 @@ def test_field_policy_view_only_edit_denied():
 
 
 def test_field_policy_hidden_view_denied():
-    """view_roles=[] → cannot view or edit."""
+    """view_roles=[] â†’ cannot view or edit."""
     pe = PolicyEngine()
     admin = _make_admin(field_policies={"name": {"view_roles": [], "edit_roles": None}})
     fp = pe.evaluate_field(_make_user(["manager"]), admin, "name", {})
@@ -169,11 +169,11 @@ def test_field_policy_view_requires_role_missing_role():
     admin = _make_admin(field_policies={"name": {"view_roles": ["manager"]}})
     fp = pe.evaluate_field(_make_user([]), admin, "name", {})
     assert fp.can_view is False
-    assert fp.can_edit is False  # no view → no edit
+    assert fp.can_edit is False  # no view â†’ no edit
 
 
 # ---------------------------------------------------------------------------
-# Policy engine — record filter
+# Policy engine â€” record filter
 # ---------------------------------------------------------------------------
 
 def test_record_filter_superadmin_returns_none():
@@ -197,7 +197,7 @@ def test_record_filter_none_configured():
 
 
 # ---------------------------------------------------------------------------
-# Policy engine — record access
+# Policy engine â€” record access
 # ---------------------------------------------------------------------------
 
 def test_record_access_superadmin_full():
@@ -235,7 +235,7 @@ def test_record_access_no_callable_allows_all():
 
 
 # ---------------------------------------------------------------------------
-# Policy engine — action policy
+# Policy engine â€” action policy
 # ---------------------------------------------------------------------------
 
 def test_action_policy_no_restriction():
@@ -263,7 +263,7 @@ def test_action_policy_denied_missing_role():
 
 
 # ---------------------------------------------------------------------------
-# Policy engine — effective model capabilities
+# Policy engine â€” effective model capabilities
 # ---------------------------------------------------------------------------
 
 def test_effective_caps_superadmin_all_true():
@@ -308,7 +308,7 @@ def test_effective_caps_action_policy_gates_update():
 
 
 # ---------------------------------------------------------------------------
-# Schema — FieldMeta and ActionMeta phase 10 fields
+# Schema â€” FieldMeta and ActionMeta phase 10 fields
 # ---------------------------------------------------------------------------
 
 def test_field_meta_has_policy_visible():
@@ -348,11 +348,11 @@ def test_field_policy_meta_schema():
 
 
 # ---------------------------------------------------------------------------
-# Contract — build_model_contract_for_user
+# Contract â€” build_model_contract_for_user
 # ---------------------------------------------------------------------------
 
 def test_build_model_contract_for_user_superadmin_all_visible():
-    from examples.default.admin_config import UserAdmin
+    from examples.basic_multi.admin_config import UserAdmin
     admin = admin_site.get("users")
     user = _make_superadmin()
     contract = build_model_contract_for_user(admin, user, {})
@@ -387,7 +387,7 @@ def test_build_model_contract_protected_fields_absent():
 
 
 # ---------------------------------------------------------------------------
-# HTTP tests — capabilities, /policy endpoint, CRUD enforcement
+# HTTP tests â€” capabilities, /policy endpoint, CRUD enforcement
 # ---------------------------------------------------------------------------
 
 @pytest_asyncio.fixture
@@ -535,7 +535,7 @@ async def test_crud_get_record_access_allowed(client, manager_user, policy_role_
 
 @pytest.mark.asyncio
 async def test_crud_update_field_policy_denied(client, manager_user, policy_role_admin, db):
-    """Manager user cannot update 'name' field — edit_roles=[]."""
+    """Manager user cannot update 'name' field â€” edit_roles=[]."""
     role = Role(name="public_editable")
     db.add(role)
     await db.commit()
@@ -615,7 +615,7 @@ async def test_protected_fields_absent_from_policy_endpoint(client, superadmin):
 
 
 # ---------------------------------------------------------------------------
-# Regression — superadmin CRUD still works
+# Regression â€” superadmin CRUD still works
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio

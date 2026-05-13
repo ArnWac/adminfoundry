@@ -1,5 +1,5 @@
 """
-Phase 4 — Admin CRUD tests.
+Phase 4 â€” Admin CRUD tests.
 Covers: registry, list/detail/create/update/delete, filtering,
 search, ordering, pagination, protected-field absence, readonly
 rejection, tenant scoping, and Phase 1-3 regression.
@@ -47,7 +47,7 @@ async def test_unknown_model_returns_404(client: AsyncClient, superadmin: User):
 
 
 # ---------------------------------------------------------------------------
-# User model — list, detail, update, protected fields
+# User model â€” list, detail, update, protected fields
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -133,7 +133,7 @@ async def test_admin_create_rejects_protected_field(client: AsyncClient, superad
 
 
 # ---------------------------------------------------------------------------
-# Role model — full CRUD
+# Role model â€” full CRUD
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -268,7 +268,7 @@ async def test_tenant_scoped_filter(client: AsyncClient, superadmin: User, db: A
 
     # Simulate tenant in request state
     from adminfoundry.middleware import tenant as tenant_mod
-    from examples.default.app import app as main_app
+    from examples.basic_multi.app import app as main_app
     from adminfoundry.database import get_db as real_get_db
     from sqlalchemy.ext.asyncio import async_sessionmaker
     import contextlib
@@ -362,7 +362,7 @@ async def test_phase3_tenants_still_works(client: AsyncClient, superadmin: User)
 
 
 # ---------------------------------------------------------------------------
-# Security: access control enforcement — unit tests for _check_model_access
+# Security: access control enforcement â€” unit tests for _check_model_access
 # ---------------------------------------------------------------------------
 
 def test_cross_tenant_impersonation_rejected():

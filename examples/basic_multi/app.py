@@ -1,31 +1,49 @@
+"""
+Multi-tenant SaaS example — subdomain-based tenant resolution.
+
+Run:
+    uvicorn examples.basic_multi.app:app --reload --host 0.0.0.0
+
+Then visit:
+    http://127.0.0.1:8000/admin-ui           (superadmin / root panel)
+    http://acme.localhost:8000/admin-ui      (tenant: acme)
+    http://orbit.localhost:8000/admin-ui     (tenant: orbit)
+
+*.localhost is resolved to 127.0.0.1 automatically on modern OSes.
+"""
 import asyncio
 from contextlib import asynccontextmanager
 
+import examples.basic_multi.database  # noqa: F401 — set env vars before other imports
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
 
-from adminfoundry.settings import settings
-from adminfoundry.core.config import CoreAdminConfig
-from adminfoundry.routers import auth, health, users, roles, tenants
-from adminfoundry.middleware.errors import validation_exception_handler, UnhandledExceptionMiddleware
-from adminfoundry.middleware.logging import RequestLoggingMiddleware, configure_json_logging
-from adminfoundry.middleware.tenant import TenantMiddleware
-from adminfoundry.middleware.security_headers import SecurityHeadersMiddleware
-from adminfoundry.middleware.rate_limit import RateLimitMiddleware
+import examples.basic_multi.admin_config  # noqa: F401 — register admins
 from adminfoundry.admin.router import create_admin
 from adminfoundry.auth_provider import AuthProvider
 from adminfoundry.cleanup import periodic_cleanup
-import examples.default.admin_config  # noqa: F401 — trigger admin registrations
+from adminfoundry.core.config import CoreAdminConfig
+from adminfoundry.middleware.errors import (
+    UnhandledExceptionMiddleware,
+    validation_exception_handler,
+)
+from adminfoundry.middleware.logging import RequestLoggingMiddleware
+from adminfoundry.middleware.rate_limit import RateLimitMiddleware
+from adminfoundry.middleware.security_headers import SecurityHeadersMiddleware
+from adminfoundry.middleware.tenant import TenantMiddleware
+from adminfoundry.routers import auth, health, roles, tenants, users
+from adminfoundry.settings import settings
+from examples.basic_multi.seed import seed, print_banner
+
 
 config = CoreAdminConfig.from_settings(settings)
-
-if settings.LOG_JSON:
-    configure_json_logging()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await seed()
+    print_banner()
     task = asyncio.create_task(periodic_cleanup())
     try:
         yield
@@ -37,7 +55,7 @@ async def lifespan(app: FastAPI):
             pass
 
 
-app = FastAPI(title="Adminfoundry Admin", lifespan=lifespan)
+app = FastAPI(title="adminfoundry — basic_multi", lifespan=lifespan)
 app.state.auth_provider = config.auth_provider or AuthProvider()
 
 app.add_middleware(UnhandledExceptionMiddleware)
@@ -45,29 +63,14 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(TenantMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
-if config.include_auth_routes:
-    app.include_router(auth.router)
+app.include_router(auth.router)
 app.include_router(health.router)
 app.include_router(users.router)
 app.include_router(roles.router)
 app.include_router(tenants.router)
-
-# Mount user-provided extension routers in registration order
-from adminfoundry.extensions import extension_registry
-for _ext in config.extensions:
-    extension_registry.register(_ext)
-    for _ext_router in _ext.get_routers():
-        app.include_router(_ext_router)
 
 create_admin(app, config=config)
 

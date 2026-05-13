@@ -9,7 +9,7 @@ _DEFAULT_SECRET_KEY = "change-me-in-production"
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/coreadmin"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/adminfoundry"
 
     SECRET_KEY: str = "change-me-in-production"
     ALGORITHM: str = "HS256"
@@ -74,4 +74,4 @@ def get_settings() -> Settings:
     return Settings()
 
 
-settings = get_settings()  # backward-compat alias
+settings = get_settings()

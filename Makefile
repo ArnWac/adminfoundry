@@ -1,10 +1,13 @@
-.PHONY: install dev up down migrate-shared migrate-tenant-schema test
+.PHONY: install dev-single dev-multi up down migrate-shared migrate-tenant-schema test doctor lint format
 
 install:
 	pip install -e ".[dev]"
 
-dev:
-	uvicorn coreAdmin_api.main:app --reload
+dev-single:
+	uvicorn examples.basic_single.app:app --reload
+
+dev-multi:
+	uvicorn examples.basic_multi.app:app --reload --host 0.0.0.0
 
 up:
 	docker compose up -d
@@ -20,3 +23,12 @@ migrate-tenant-schema:
 
 test:
 	pytest tests/ -q
+
+doctor:
+	adminfoundry doctor
+
+lint:
+	python -m compileall -q adminfoundry examples tests
+
+format:
+	@echo "No formatter configured. Add ruff/black to dev deps and wire here."

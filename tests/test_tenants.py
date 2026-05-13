@@ -1,5 +1,5 @@
 """
-Phase 3 — Tenant CRUD, middleware, slug validation, and single-tenant regression.
+Phase 3 â€” Tenant CRUD, middleware, slug validation, and single-tenant regression.
 
 Fast tests only (no Docker). Middleware tests override AsyncSessionLocal to avoid
 hitting the production DB during resolution.
@@ -118,7 +118,7 @@ async def test_migrate_tenant_noop_on_sqlite(client: AsyncClient, superadmin: Us
 
 
 # ---------------------------------------------------------------------------
-# Tenant middleware — branching logic
+# Tenant middleware â€” branching logic
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -132,7 +132,7 @@ async def test_middleware_passthrough_when_flag_false(client: AsyncClient):
 async def test_middleware_disabled_tenant_blocked(db: AsyncSession, db_engine):
     """Middleware returns 403 when resolved tenant is disabled (MULTI_TENANT=true)."""
     from adminfoundry.tenancy import resolver as tenant_mod
-    from examples.default.app import app as main_app
+    from examples.basic_multi.app import app as main_app
 
     disabled = Tenant(name="Disabled Co", slug="disabled-co", is_active=False)
     db.add(disabled)
@@ -160,7 +160,7 @@ async def test_middleware_disabled_tenant_blocked(db: AsyncSession, db_engine):
 async def test_middleware_unknown_tenant_404(db: AsyncSession, db_engine):
     """Middleware returns 404 for unknown tenant slug."""
     from adminfoundry.tenancy import resolver as tenant_mod
-    from examples.default.app import app as main_app
+    from examples.basic_multi.app import app as main_app
 
     factory = async_sessionmaker(db_engine, expire_on_commit=False)
 
@@ -183,7 +183,7 @@ async def test_middleware_unknown_tenant_404(db: AsyncSession, db_engine):
 async def test_middleware_active_tenant_passes(db: AsyncSession, db_engine):
     """Middleware stores tenant in state and lets request through."""
     from adminfoundry.tenancy import resolver as tenant_mod
-    from examples.default.app import app as main_app
+    from examples.basic_multi.app import app as main_app
 
     active = Tenant(name="Active Co", slug="active-co", is_active=True)
     db.add(active)
@@ -210,7 +210,7 @@ async def test_middleware_active_tenant_passes(db: AsyncSession, db_engine):
 async def test_middleware_no_header_stores_none(db: AsyncSession, db_engine):
     """When MULTI_TENANT=true but no header, request proceeds (tenant=None)."""
     from adminfoundry.tenancy import resolver as tenant_mod
-    from examples.default.app import app as main_app
+    from examples.basic_multi.app import app as main_app
 
     with patch("adminfoundry.settings.settings.MULTI_TENANT", True):
         transport = ASGITransport(app=main_app)
@@ -220,7 +220,7 @@ async def test_middleware_no_header_stores_none(db: AsyncSession, db_engine):
 
 
 # ---------------------------------------------------------------------------
-# get_tenant_db — requires tenant context in multi-tenant mode
+# get_tenant_db â€” requires tenant context in multi-tenant mode
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio

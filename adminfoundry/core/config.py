@@ -1,4 +1,4 @@
-"""Typed configuration model for the coreAdmin framework.
+"""Typed configuration model for the adminfoundry framework.
 
 Runtime code should consume CoreAdminConfig, not raw environment variables.
 Use CoreAdminConfig.from_settings(settings) to build from the env-backed Settings object.
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class CoreAdminConfig:
-    """Central typed configuration for a coreAdmin installation.
+    """Central typed configuration for an adminfoundry installation.
 
     Defaults produce a minimal core installation — optional extensions are off.
     Disabled features do not mount routers, expose metadata, or import heavy deps.

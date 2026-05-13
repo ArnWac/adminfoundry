@@ -10,6 +10,13 @@ from adminfoundry.cache import cache
 from adminfoundry.storage import storage
 from adminfoundry.i18n import t
 from adminfoundry.dashboard import DashboardWidget
+from adminfoundry.actions import (
+    BulkDeleteAction,
+    DeactivateUsersAction,
+    ActivateUsersAction,
+    DisableTenantAction,
+    EnableTenantAction,
+)
 
 __version__ = "0.1.0"
 
@@ -20,6 +27,11 @@ __all__ = [
     "admin_site",
     "AuthProvider",
     "DashboardWidget",
+    "BulkDeleteAction",
+    "DeactivateUsersAction",
+    "ActivateUsersAction",
+    "DisableTenantAction",
+    "EnableTenantAction",
     "signals",
     "webhooks",
     "cache",

@@ -1,64 +1,22 @@
-"""
-Admin registrations — import this module to activate them.
+"""Admin registrations for the multi-tenant SaaS example.
 
-Note: admin CRUD for User is read/update only — use POST /api/v1/users to
-create users (the admin create path lacks the password hashing step).
+Registers framework models (User, Role, Tenant, AuditLog) plus a tenant-scoped
+domain model (Project). Tests rely on the exact shape of these registrations.
 """
-from adminfoundry.admin import admin_site, ModelAdmin
-from adminfoundry.admin.actions import AdminAction
+from adminfoundry import (
+    ModelAdmin, admin_site,
+    BulkDeleteAction, DeactivateUsersAction, ActivateUsersAction,
+    DisableTenantAction, EnableTenantAction,
+)
 from adminfoundry.auth import hash_password
 from adminfoundry.models.audit_log import AuditLog
 from adminfoundry.models.role import Role
-from adminfoundry.models.role_permission import RolePermission  # noqa: F401 — registers table with Base.metadata
+from adminfoundry.models.role_permission import RolePermission  # noqa: F401 — register table
 from adminfoundry.models.tenant import Tenant
 from adminfoundry.models.user import User
 from adminfoundry.settings import settings
 
-
-class BulkDeleteAction(AdminAction):
-    name = "delete"
-    label = "Delete selected"
-    danger = True
-    confirm = True
-    bulk = True
-    single = False
-
-    async def execute(self, objects, db, user):
-        count = len(objects)
-        for obj in objects:
-            await db.delete(obj)
-        await db.commit()
-        return {"summary": f"Deleted {count} record(s)", "affected": count}
-
-
-class DeactivateUsersAction(AdminAction):
-    name = "deactivate"
-    label = "Deactivate selected"
-    danger = True
-    confirm = True
-    bulk = True
-    single = True
-
-    async def execute(self, objects, db, user):
-        for obj in objects:
-            obj.is_active = False
-        await db.commit()
-        return {"summary": f"Deactivated {len(objects)} user(s)", "affected": len(objects)}
-
-
-class DisableTenantAction(AdminAction):
-    name = "disable"
-    label = "Disable tenant"
-    danger = True
-    confirm = True
-    bulk = False
-    single = True
-
-    async def execute(self, objects, db, user):
-        for obj in objects:
-            obj.is_active = False
-        await db.commit()
-        return {"summary": f"Disabled {len(objects)} tenant(s)", "affected": len(objects)}
+from examples.basic_multi.models import Project
 
 
 class UserAdmin(ModelAdmin):
@@ -72,7 +30,7 @@ class UserAdmin(ModelAdmin):
     ordering = ["email"]
     readonly_fields = ["id", "created_at", "updated_at"]
     # hashed_password is globally protected — no need to list it here
-    # Users are global — tenant membership is handled via tenant-scoped Profiles in the app
+    # Users are global — tenant membership is handled via tenant-scoped roles
     protected_fields = ["tenant_id"]
     tenant_scoped = False
     extra_create_fields = {"set_password": str}
@@ -83,7 +41,8 @@ class UserAdmin(ModelAdmin):
         if plain:
             data["hashed_password"] = hash_password(plain)
         return data
-    actions = [DeactivateUsersAction(), BulkDeleteAction()]
+
+    actions = [DeactivateUsersAction(), ActivateUsersAction(), BulkDeleteAction()]
 
 
 class RoleAdmin(ModelAdmin):
@@ -113,7 +72,7 @@ class TenantAdmin(ModelAdmin):
     filter_fields = ["is_active"]
     ordering = ["slug"]
     readonly_fields = ["id", "created_at", "updated_at"]
-    actions = [DisableTenantAction()]
+    actions = [DisableTenantAction(), EnableTenantAction()]
 
 
 class AuditLogAdmin(ModelAdmin):
@@ -133,8 +92,23 @@ class AuditLogAdmin(ModelAdmin):
     actions = []
 
 
+class ProjectAdmin(ModelAdmin):
+    model         = Project
+    label         = "Project"
+    label_plural  = "Projects"
+    description   = "Projects of the active tenant"
+    list_display  = ["name", "active", "created_at"]
+    search_fields = ["name"]
+    filter_fields = ["active"]
+    ordering      = ["name"]
+    readonly_fields = ["id", "created_at", "updated_at", "tenant_id"]
+    tenant_scoped = True
+    actions = [BulkDeleteAction()]
+
+
 admin_site.register(UserAdmin())
 admin_site.register(RoleAdmin())
 admin_site.register(AuditLogAdmin())
+admin_site.register(ProjectAdmin())
 if settings.MULTI_TENANT:
     admin_site.register(TenantAdmin())

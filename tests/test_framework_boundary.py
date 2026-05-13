@@ -9,10 +9,13 @@ import sys
 
 
 def test_framework_does_not_import_example_admin_config():
-    """Importing adminfoundry must not pull in examples.default.admin_config."""
-    # Clear any cached state from previous tests
+    """Importing adminfoundry must not pull in any example admin_config."""
     for key in list(sys.modules.keys()):
-        if "examples.default.admin_config" in key or "adminfoundry.admin_config" in key:
+        if (
+            "examples.basic_single.admin_config" in key
+            or "examples.basic_multi.admin_config" in key
+            or "adminfoundry.admin_config" in key
+        ):
             del sys.modules[key]
 
     import adminfoundry  # noqa: F401
@@ -20,9 +23,8 @@ def test_framework_does_not_import_example_admin_config():
     assert "adminfoundry.admin_config" not in sys.modules, (
         "adminfoundry.admin_config leaked into sys.modules — framework must not ship demo registrations"
     )
-    assert "examples.default.admin_config" not in sys.modules, (
-        "examples.default.admin_config leaked on bare framework import"
-    )
+    assert "examples.basic_single.admin_config" not in sys.modules
+    assert "examples.basic_multi.admin_config" not in sys.modules
 
 
 def test_create_admin_is_public_entrypoint():
@@ -39,23 +41,23 @@ def test_create_coreadmin_is_gone():
     )
 
 
-def test_basic_single_tenant_example_imports():
-    """Smoke import of the basic single-tenant example — run in subprocess to avoid polluting Base.metadata."""
+def test_basic_single_example_imports():
+    """Smoke import of the basic_single example — subprocess avoids polluting Base.metadata."""
     import subprocess, sys, os
     env = {**os.environ, "DATABASE_URL": "sqlite+aiosqlite:///:memory:"}
     result = subprocess.run(
-        [sys.executable, "-c", "import examples.basic_single_tenant.admin_config"],
+        [sys.executable, "-c", "import examples.basic_single.admin_config"],
         capture_output=True, text=True, env=env,
     )
     assert result.returncode == 0, result.stderr
 
 
-def test_basic_multi_tenant_example_imports():
-    """Smoke import of the basic multi-tenant example — run in subprocess to avoid polluting Base.metadata."""
+def test_basic_multi_example_imports():
+    """Smoke import of the basic_multi example — subprocess avoids polluting Base.metadata."""
     import subprocess, sys, os
     env = {**os.environ, "DATABASE_URL": "sqlite+aiosqlite:///:memory:", "MULTI_TENANT": "true"}
     result = subprocess.run(
-        [sys.executable, "-c", "import examples.basic_multi_tenant.admin_config"],
+        [sys.executable, "-c", "import examples.basic_multi.admin_config"],
         capture_output=True, text=True, env=env,
     )
     assert result.returncode == 0, result.stderr

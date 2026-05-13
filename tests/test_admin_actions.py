@@ -9,14 +9,14 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from examples.default.admin_config import DeactivateUsersAction, DisableTenantAction
+from adminfoundry.actions import DeactivateUsersAction, DisableTenantAction
 from adminfoundry.auth import create_access_token, hash_password
 from adminfoundry.models.user import User
 from adminfoundry.models.tenant import Tenant
 
 # Mount the jobs router on the shared test app (it's opt-in and not in the default config)
 from adminfoundry.extensions.jobs.router import router as _jobs_router
-from examples.default.app import app as _app
+from examples.basic_multi.app import app as _app
 _already_mounted = any(
     getattr(r, "path", "").startswith("/api/v1/jobs") for r in _app.routes
 )
@@ -143,7 +143,7 @@ async def test_bulk_action_execute_exception_marks_job_failed(
     client: AsyncClient, db: AsyncSession, superadmin: User, monkeypatch
 ):
     """If execute() raises, the endpoint must mark the job failed and return 500."""
-    from examples.default import admin_config as _cfg  # noqa: F401 — ensure registrations loaded
+    from examples.basic_multi import admin_config as _cfg  # noqa: F401 — ensure registrations loaded
 
     original_execute = DeactivateUsersAction.execute
 

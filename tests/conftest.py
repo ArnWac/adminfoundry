@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy import text
 from sqlalchemy.pool import StaticPool, NullPool
-from examples.default.app import app
+from examples.basic_multi.app import app
 from adminfoundry.database import get_db, get_admin_db
 from adminfoundry.models.base import Base
 from adminfoundry.models.user import User
@@ -34,7 +34,7 @@ _bcrypt.gensalt = lambda rounds=4, prefix=b"2b": _orig_gensalt(rounds=4, prefix=
 
 # ---------------------------------------------------------------------------
 # Database URL — set TEST_DATABASE_URL to run against PostgreSQL:
-#   $env:TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/coreadmin_test"
+#   $env:TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/adminfoundry_test"
 #   pytest tests/
 # ---------------------------------------------------------------------------
 
