@@ -785,6 +785,37 @@ async def model_policy(
 # Permission matrix — must be before /{model_name}/{object_id} to avoid conflict
 # ---------------------------------------------------------------------------
 
+@router.get("/permission-matrix/template")
+async def get_permission_matrix_template(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Return the full model list with all permissions false — used by the create-role form."""
+    payload = getattr(request.state, "token_payload", {})
+    _require_superadmin_or_impersonating(current_user, payload, request)
+
+    is_impersonating = bool(payload.get("impersonated_by"))
+    tenant = getattr(request.state, "tenant", None)
+    in_tenant_context = is_impersonating or tenant is not None
+    if in_tenant_context:
+        names = [mn for mn in admin_site.model_names()
+                 if getattr(admin_site.get(mn), "tenant_scoped", False)]
+    else:
+        names = admin_site.model_names()
+
+    return [
+        {
+            "model_name": mn,
+            "label": getattr(admin_site.get(mn), "label_plural", mn),
+            "can_list": False,
+            "can_create": False,
+            "can_update": False,
+            "can_delete": False,
+        }
+        for mn in names
+    ]
+
+
 @router.get("/permission-matrix/{role_id}")
 async def get_permission_matrix(
     role_id: uuid.UUID,

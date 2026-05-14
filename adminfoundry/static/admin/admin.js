@@ -688,7 +688,7 @@ async function initDetail(model, objectId) {
       bodyEl.appendChild(enterBtn);
     }
 
-    // 4B: permission matrix section
+    // 4B: permission matrix section (read-only in detail view)
     if (meta?.permission_matrix) {
       const matrixCard = document.createElement('div');
       matrixCard.className = 'card';
@@ -696,7 +696,7 @@ async function initDetail(model, objectId) {
       matrixCard.innerHTML = `<h3 style="font-size:.95rem;font-weight:600;margin-bottom:1rem">${T('section_crud_permissions')}</h3><div id="permission-matrix-body"></div>`;
       const layoutEl = bodyEl.closest('.detail-layout') || bodyEl.parentElement;
       layoutEl.insertAdjacentElement('afterend', matrixCard);
-      renderPermissionMatrix(objectId, document.getElementById('permission-matrix-body'));
+      renderPermissionMatrix(objectId, document.getElementById('permission-matrix-body'), true);
     }
 
     // Inline relations (read-only in detail view)
@@ -794,11 +794,42 @@ async function initCreate(model) {
 
     populateRelationSelects(formEl);
 
+    // Permission matrix below the create form (fetched from /template, saved after role is created)
+    if (meta?.permission_matrix) {
+      const matrixCard = document.createElement('div');
+      matrixCard.className = 'card';
+      matrixCard.style.marginTop = '1.25rem';
+      matrixCard.innerHTML = `<h3 style="font-size:.95rem;font-weight:600;margin-bottom:1rem">${T('section_crud_permissions')}</h3><div id="create-permission-matrix"><p class="loading">${T('status_loading_permissions')}</p></div>`;
+      formEl.parentElement.insertAdjacentElement('afterend', matrixCard);
+      try {
+        const template = await API.get('/admin/permission-matrix/template');
+        _buildMatrixTable(template, document.getElementById('create-permission-matrix'), null, false);
+      } catch (_) { /* non-critical */ }
+    }
+
     formEl.addEventListener('submit', async e => {
       e.preventDefault();
       const body = collectForm(formEl, writableFields);
       try {
         const created = await API.post(`/admin/${model}`, body);
+        // Submit permission matrix if it was rendered in the create form
+        const matrixEl = document.getElementById('create-permission-matrix');
+        if (matrixEl) {
+          const ops = ['can_list', 'can_create', 'can_update', 'can_delete'];
+          const checkboxes = [...matrixEl.querySelectorAll('input[data-model]')];
+          const modelNames = [...new Set(checkboxes.map(cb => cb.dataset.model))];
+          const matrixData = modelNames.map(mn => {
+            const entry = { model_name: mn };
+            ops.forEach(op => {
+              const cb = matrixEl.querySelector(`input[data-model="${mn}"][data-op="${op}"]`);
+              entry[op] = cb ? cb.checked : false;
+            });
+            return entry;
+          });
+          await API._fetch(`/admin/permission-matrix/${created.id}`, {
+            method: 'PUT', body: JSON.stringify(matrixData),
+          });
+        }
         // 1C: respect create_redirect ("list" default, "detail" for opt-in models)
         if (meta.create_redirect === 'detail') {
           window.location.href = `${UI_BASE}/${model}/${created.id}`;
@@ -1531,31 +1562,29 @@ async function openInlineCreate(targetTable, selectId) {
 // ---------------------------------------------------------------------------
 // 4B: Permission matrix section for role-like models
 // ---------------------------------------------------------------------------
-async function renderPermissionMatrix(objectId, containerEl) {
-  containerEl.innerHTML = `<p class="loading">${T('status_loading_permissions')}</p>`;
-  try {
-    const matrix = await API.get(`/admin/permission-matrix/${objectId}`);
+function _buildMatrixTable(matrix, containerEl, objectId, readonly) {
+  const ops = ['can_list', 'can_create', 'can_update', 'can_delete'];
+  const opLabels = {
+    can_list: T('table_header_list'), can_create: T('table_header_create'),
+    can_update: T('table_header_update'), can_delete: T('table_header_delete'),
+  };
+  const thead = `<thead><tr><th>${T('table_header_model')}</th>` + ops.map(o => `<th style="text-align:center">${opLabels[o]}</th>`).join('') + '</tr></thead>';
+  const tbody = matrix.map(row =>
+    `<tr><td style="font-weight:500">${esc(row.label || row.model_name)}</td>` +
+    ops.map(op =>
+      `<td style="text-align:center"><input type="checkbox" data-model="${esc(row.model_name)}" data-op="${esc(op)}"${row[op] ? ' checked' : ''}${readonly ? ' disabled' : ''}></td>`
+    ).join('') +
+    '</tr>'
+  ).join('');
+  containerEl.innerHTML = `<table style="width:100%">${thead}<tbody>${tbody}</tbody></table>`;
 
-    const ops = ['can_list', 'can_create', 'can_update', 'can_delete'];
-    const opLabels = {
-      can_list: T('table_header_list'), can_create: T('table_header_create'),
-      can_update: T('table_header_update'), can_delete: T('table_header_delete'),
-    };
-
-    const thead = `<thead><tr><th>${T('table_header_model')}</th>` + ops.map(o => `<th style="text-align:center">${opLabels[o]}</th>`).join('') + '</tr></thead>';
-    const tbody = matrix.map(row =>
-      `<tr><td style="font-weight:500">${esc(row.label || row.model_name)}</td>` +
-      ops.map(op =>
-        `<td style="text-align:center"><input type="checkbox" data-model="${esc(row.model_name)}" data-op="${esc(op)}"${row[op] ? ' checked' : ''}></td>`
-      ).join('') +
-      '</tr>'
-    ).join('');
-
-    containerEl.innerHTML =
-      `<table style="width:100%">${thead}<tbody>${tbody}</tbody></table>` +
-      `<button id="matrix-save" class="btn btn-primary" style="margin-top:1rem">${T('action_save_permissions')}</button>`;
-
-    document.getElementById('matrix-save')?.addEventListener('click', async () => {
+  if (!readonly && objectId) {
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'btn btn-primary';
+    saveBtn.style.marginTop = '1rem';
+    saveBtn.textContent = T('action_save_permissions');
+    containerEl.appendChild(saveBtn);
+    saveBtn.addEventListener('click', async () => {
       const updated = matrix.map(row => {
         const entry = { model_name: row.model_name };
         ops.forEach(op => {
@@ -1573,6 +1602,14 @@ async function renderPermissionMatrix(objectId, containerEl) {
         showError(fmtAPIError(err));
       }
     });
+  }
+}
+
+async function renderPermissionMatrix(objectId, containerEl, readonly = false) {
+  containerEl.innerHTML = `<p class="loading">${T('status_loading_permissions')}</p>`;
+  try {
+    const matrix = await API.get(`/admin/permission-matrix/${objectId}`);
+    _buildMatrixTable(matrix, containerEl, objectId, readonly);
   } catch (err) {
     containerEl.innerHTML = `<div class="alert alert-error" style="display:block">${esc(fmtAPIError(err))}</div>`;
   }
