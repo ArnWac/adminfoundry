@@ -326,7 +326,7 @@ async def admin_metrics(
     _: User = Depends(require_superadmin),
 ):
     """Return admin operational metrics snapshot — no secrets or protected field content."""
-    from adminfoundry.extensions.observability.admin_metrics import get_snapshot
+    from adminfoundry.runtime_metrics import get_snapshot
     return get_snapshot()
 
 
@@ -1306,7 +1306,7 @@ def _install_middleware(app, config) -> None:
         # and the slug extractor use the values set in CoreAdminConfig, not env vars.
         settings.MULTI_TENANT = True
         settings.TENANT_RESOLUTION_STRATEGY = config.tenant_resolution
-        from adminfoundry.middleware.tenant import TenantMiddleware
+        from adminfoundry.tenancy.middleware import TenantMiddleware
         app.add_middleware(TenantMiddleware)
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(RequestLoggingMiddleware)

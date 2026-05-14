@@ -267,7 +267,6 @@ async def test_tenant_scoped_filter(client: AsyncClient, superadmin: User, db: A
     await db.commit()
 
     # Simulate tenant in request state
-    from adminfoundry.middleware import tenant as tenant_mod
     from examples.basic_multi.app import app as main_app
     from adminfoundry.database import get_db as real_get_db
     from sqlalchemy.ext.asyncio import async_sessionmaker

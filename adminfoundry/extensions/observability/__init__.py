@@ -1,12 +1,15 @@
-"""Observability extension — in-process admin metrics.
+"""Observability extension — admin metrics dashboard widgets and (future) exporters.
 
-Provides: request/action/audit counters, contract version tracking, client type tracking.
-Replace the in-process counters with Prometheus or OpenTelemetry in production.
+Reads from the neutral core runtime counter store at `adminfoundry.runtime_metrics`.
+The counter store itself lives in core so that core middleware and health endpoints
+can write/read without depending on this extension being registered.
 
-Optional: add ObservabilityExtension() to CoreAdminConfig.extensions to enable.
-Counters are collected by middleware automatically once the extension is registered.
+Optional: add ObservabilityExtension() to CoreAdminConfig.extensions to enable
+the metrics dashboard widget. Future versions may contribute Prometheus/OTel
+exporters here as well.
 """
 from adminfoundry.extensions import ExtensionBase
+from adminfoundry.extensions.observability.widgets import AdminMetricsWidget
 
 
 class ObservabilityExtension(ExtensionBase):
@@ -23,8 +26,11 @@ class ObservabilityExtension(ExtensionBase):
             "client_type_tracking": True,
         }
 
+    def get_dashboard_widgets(self) -> list:
+        return [AdminMetricsWidget()]
+
     def startup_check(self) -> None:
-        from adminfoundry.extensions.observability.admin_metrics import get_snapshot  # noqa: F401
+        from adminfoundry.runtime_metrics import get_snapshot  # noqa: F401
 
 
-__all__ = ["ObservabilityExtension"]
+__all__ = ["ObservabilityExtension", "AdminMetricsWidget"]

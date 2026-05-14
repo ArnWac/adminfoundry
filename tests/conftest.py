@@ -12,6 +12,9 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy import text
 from sqlalchemy.pool import StaticPool, NullPool
+# The whole test suite reuses the multi-tenant example app — it already wires
+# jobs + workflows extensions and is the most realistic mounted-everything app.
+# TODO: extract a test-owned app_factory fixture so tests don't depend on examples.
 from examples.basic_multi.app import app
 from adminfoundry.database import get_db, get_admin_db
 from adminfoundry.models.base import Base
@@ -114,7 +117,7 @@ def reset_rate_limiter():
 
 @pytest.fixture(autouse=True)
 def reset_tenant_cache():
-    from adminfoundry.middleware.tenant import clear_tenant_cache
+    from adminfoundry.tenancy.resolver import clear_tenant_cache
     clear_tenant_cache()
     yield
     clear_tenant_cache()

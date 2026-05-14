@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     AUDIT_LOG_RETENTION_DAYS: int = 90  # 0 = keep forever
     PASSWORD_MIN_LENGTH: int = 8
 
-    # Cleanup task (caller must still wire `asyncio.create_task(periodic_cleanup())`)
+    # Cleanup task — wired automatically by create_admin()'s lifespan; set False to disable.
     ENABLE_CLEANUP_TASK: bool = True
     CLEANUP_INTERVAL_SECONDS: int = 3600
 

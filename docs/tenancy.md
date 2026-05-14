@@ -65,7 +65,7 @@ Cache is invalidated via `clear_tenant_cache()`. The conftest fixture calls this
 
 ## TenantMiddleware
 
-`adminfoundry.tenancy.TenantMiddleware` (also re-exported from `adminfoundry.middleware.tenant`):
+`adminfoundry.tenancy.TenantMiddleware`:
 
 1. If `MULTI_TENANT=False` — skips all logic.
 2. Extracts slug via resolution strategy.

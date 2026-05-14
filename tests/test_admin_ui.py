@@ -14,7 +14,7 @@ import pytest
 from unittest.mock import patch
 from httpx import AsyncClient, ASGITransport
 
-from adminfoundry.admin.ui_renderer import get_support_matrix, RENDERER_ID, SUPPORTED_FEATURES
+from adminfoundry.admin.ui_renderer import get_support_matrix, RENDERER_ID, SUPPORTED_FEATURES, RENDERER_VERSION
 from adminfoundry.admin.registry import admin_site
 
 
@@ -48,8 +48,25 @@ def test_support_matrix_deferred_features_not_supported():
     m = SUPPORTED_FEATURES
     # audit_log_view and workflow_approval remain deferred
     assert m["audit_log_view"] is False
-    # bulk_actions, delete, dangerous_actions are supported
     assert m.get("unsupported_features_degrade_safely") is True
+
+
+def test_support_matrix_phase8_plus_features_supported():
+    """Phase 8+ feature flags must be True in the baseline renderer."""
+    m = SUPPORTED_FEATURES
+    assert m["delete"] is True
+    assert m["dangerous_actions"] is True
+    assert m["field_filters"] is True
+    assert m["preference_persistence"] is True
+    assert m["impersonation_state_visible"] is True
+    assert m["validation_field_level_errors"] is True
+    assert m["bulk_actions"] is True
+    assert m["relation_selection"] is True
+
+
+def test_renderer_version_is_at_least_phase8():
+    major = float(RENDERER_VERSION.split(".")[0])
+    assert major >= 8
 
 
 def test_support_matrix_quality_flags():
@@ -334,3 +351,97 @@ async def test_admin_api_still_works(client, superadmin):
     )
     assert resp.status_code == 200
     assert "models" in resp.json()
+
+
+# ---------------------------------------------------------------------------
+# confirm_delete page
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_confirm_delete_page_renders(client):
+    import uuid
+    fake_id = str(uuid.uuid4())
+    resp = await client.get(f"/admin-ui/user/{fake_id}/delete")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+@pytest.mark.asyncio
+async def test_confirm_delete_has_danger_zone(client):
+    import uuid
+    fake_id = str(uuid.uuid4())
+    resp = await client.get(f"/admin-ui/user/{fake_id}/delete")
+    assert b"danger-zone" in resp.content
+
+
+@pytest.mark.asyncio
+async def test_confirm_delete_has_warning_text(client):
+    import uuid
+    fake_id = str(uuid.uuid4())
+    resp = await client.get(f"/admin-ui/user/{fake_id}/delete")
+    assert b"irreversible" in resp.content
+
+
+@pytest.mark.asyncio
+async def test_confirm_delete_has_confirm_button(client):
+    import uuid
+    fake_id = str(uuid.uuid4())
+    resp = await client.get(f"/admin-ui/user/{fake_id}/delete")
+    assert b"confirm-delete-btn" in resp.content
+    assert b"btn-danger" in resp.content
+
+
+@pytest.mark.asyncio
+async def test_confirm_delete_aria_describedby(client):
+    """Danger button must reference the warning text for accessibility."""
+    import uuid
+    fake_id = str(uuid.uuid4())
+    resp = await client.get(f"/admin-ui/user/{fake_id}/delete")
+    assert b"aria-describedby" in resp.content
+    assert b"delete-warning" in resp.content
+
+
+@pytest.mark.asyncio
+async def test_confirm_delete_no_protected_fields(client):
+    import uuid
+    fake_id = str(uuid.uuid4())
+    resp = await client.get(f"/admin-ui/user/{fake_id}/delete")
+    assert b"hashed_password" not in resp.content
+    assert b"SECRET_KEY" not in resp.content
+
+
+# ---------------------------------------------------------------------------
+# Base template — impersonation indicator + tenant context element
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_base_template_has_impersonation_banner_class(client):
+    """The impersonation banner CSS class must be defined in the stylesheet."""
+    resp = await client.get("/admin-ui/static/admin.css")
+    assert b"impersonation-banner" in resp.content
+
+
+@pytest.mark.asyncio
+async def test_base_template_has_tenant_ctx_element(client):
+    resp = await client.get("/admin-ui/dashboard")
+    assert b"tenant-ctx" in resp.content
+
+
+# ---------------------------------------------------------------------------
+# Validation error containers in create/update forms
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_create_form_has_toast_container(client):
+    resp = await client.get("/admin-ui/user/new")
+    assert b'id="record-form"' in resp.content
+    assert b'toast-container' in resp.content
+
+
+@pytest.mark.asyncio
+async def test_update_form_has_toast_container(client):
+    import uuid
+    fake_id = str(uuid.uuid4())
+    resp = await client.get(f"/admin-ui/user/{fake_id}/edit")
+    assert b'id="record-form"' in resp.content
+    assert b'toast-container' in resp.content

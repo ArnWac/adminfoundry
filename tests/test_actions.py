@@ -37,12 +37,17 @@ async def test_activate_users_action(db: AsyncSession, superadmin: User):
 
 
 @pytest.mark.asyncio
-async def test_deactivate_users_action(db: AsyncSession, superadmin: User):
-    u = await _make_user(db, "deact@example.com", active=True)
-    result = await DeactivateUsersAction().execute([u], db, superadmin)
-    assert result["affected"] == 1
-    await db.refresh(u)
-    assert u.is_active is False
+@pytest.mark.parametrize("n_users", [1, 2])
+async def test_deactivate_users_action(db: AsyncSession, superadmin: User, n_users: int):
+    users = [
+        await _make_user(db, f"deact{i}@example.com", active=True)
+        for i in range(n_users)
+    ]
+    result = await DeactivateUsersAction().execute(users, db, superadmin)
+    assert result["affected"] == n_users
+    for u in users:
+        await db.refresh(u)
+        assert u.is_active is False
 
 
 @pytest.mark.asyncio

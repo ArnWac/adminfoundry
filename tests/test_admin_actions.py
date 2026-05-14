@@ -1,18 +1,16 @@
-"""
-AdminAction tests.
+"""AdminAction HTTP endpoint tests (bulk endpoint + jobs extension integration).
 
-Covers: DeactivateUsersAction.execute(), DisableTenantAction.execute(),
-bulk endpoint happy path, missing confirm, unknown action, and execute()
-exception → job marked failed.
+Unit-level execute() coverage lives in test_actions.py. This file exercises the
+HTTP path through the jobs router and validates error paths (missing confirm,
+unknown action, execute() exception → job marked failed).
 """
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from adminfoundry.actions import DeactivateUsersAction, DisableTenantAction
+from adminfoundry.actions import DeactivateUsersAction
 from adminfoundry.auth import create_access_token, hash_password
 from adminfoundry.models.user import User
-from adminfoundry.models.tenant import Tenant
 
 # Mount the jobs router on the shared test app (it's opt-in and not in the default config)
 from adminfoundry.extensions.jobs.router import router as _jobs_router
@@ -40,54 +38,6 @@ async def _make_user(db: AsyncSession, email: str, *, active=True) -> User:
     await db.refresh(u)
     return u
 
-
-# ---------------------------------------------------------------------------
-# Unit tests — execute() directly
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_deactivate_action_sets_inactive(db: AsyncSession, superadmin: User):
-    target = await _make_user(db, "target@example.com", active=True)
-    action = DeactivateUsersAction()
-    result = await action.execute([target], db, superadmin)
-
-    assert result["affected"] == 1
-    await db.refresh(target)
-    assert target.is_active is False
-
-
-@pytest.mark.asyncio
-async def test_deactivate_action_bulk(db: AsyncSession, superadmin: User):
-    u1 = await _make_user(db, "u1@example.com")
-    u2 = await _make_user(db, "u2@example.com")
-    action = DeactivateUsersAction()
-    result = await action.execute([u1, u2], db, superadmin)
-
-    assert result["affected"] == 2
-    await db.refresh(u1)
-    await db.refresh(u2)
-    assert u1.is_active is False
-    assert u2.is_active is False
-
-
-@pytest.mark.asyncio
-async def test_disable_tenant_action(db: AsyncSession, superadmin: User):
-    tenant = Tenant(name="Acme", slug="acme", is_active=True)
-    db.add(tenant)
-    await db.commit()
-    await db.refresh(tenant)
-
-    action = DisableTenantAction()
-    result = await action.execute([tenant], db, superadmin)
-
-    assert result["affected"] == 1
-    await db.refresh(tenant)
-    assert tenant.is_active is False
-
-
-# ---------------------------------------------------------------------------
-# Bulk endpoint — HTTP path
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_bulk_deactivate_via_endpoint(
@@ -144,8 +94,6 @@ async def test_bulk_action_execute_exception_marks_job_failed(
 ):
     """If execute() raises, the endpoint must mark the job failed and return 500."""
     from examples.basic_multi import admin_config as _cfg  # noqa: F401 — ensure registrations loaded
-
-    original_execute = DeactivateUsersAction.execute
 
     async def _explode(self, objects, _db, _user):
         raise RuntimeError("simulated failure")

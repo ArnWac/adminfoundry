@@ -1,5 +1,9 @@
-"""
-Simple in-process admin metrics counters.
+"""Neutral in-process runtime counter store.
+
+Core middleware and health/runtime endpoints write to and read from this module.
+The optional ObservabilityExtension contributes dashboard widgets and exporters
+that read from this module — core must not import from the extension namespace.
+
 Never exposes secrets, token internals, or protected field content.
 Replace with Prometheus/OpenTelemetry counters in production.
 """

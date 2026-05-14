@@ -1,14 +1,23 @@
 """adminfoundry extension architecture.
 
-Extensions add optional capabilities (jobs, import/export, workflows, etc.)
-without bloating the core package.  Each extension declares routers, models,
-admin registrations, capability metadata, and startup/health checks.
+The ``adminfoundry.extensions`` namespace contains two kinds of optional code:
 
-Usage::
+1. **ExtensionBase plugins** — registered via ``CoreAdminConfig.extensions``.
+   These declare routers, models, admin registrations, capability metadata,
+   dashboard widgets, and startup/health checks::
 
-    from adminfoundry.extensions.jobs import JobsExtension
+       from adminfoundry.extensions.jobs import JobsExtension
+       config = CoreAdminConfig(extensions=[JobsExtension()])
 
-    config = CoreAdminConfig(extensions=[JobsExtension()])
+2. **Optional provider backends** — wired via dedicated config fields, not the
+   extensions list. Example::
+
+       from adminfoundry.extensions.storage_s3 import S3Storage
+       config = CoreAdminConfig(storage_backend=S3Storage(bucket="my-bucket"))
+
+   These backends are kept under ``extensions/`` because they pull optional
+   third-party dependencies (boto3, redis, etc.). Core must never eagerly
+   import them — they are imported only when the user wires them in.
 """
 from __future__ import annotations
 

@@ -71,10 +71,13 @@ class CoreAdminConfig:
     # Storage backend instance — None uses LocalStorage("uploads")
     storage_backend: Any | None = None
 
-    # Dashboard widgets — None uses DEFAULT_WIDGETS (ModelCounts + AdminMetrics).
-    # Provide a list to control exactly which widgets appear. Use
-    # `from adminfoundry.dashboard import DEFAULT_WIDGETS` to extend the defaults:
+    # Dashboard widgets — None uses DEFAULT_WIDGETS (core generic widgets only).
+    # Provide a list to REPLACE the defaults. Widgets contributed by enabled
+    # extensions (via ExtensionBase.get_dashboard_widgets()) are APPENDED after
+    # the selected base widgets. Use:
+    #   from adminfoundry.dashboard import DEFAULT_WIDGETS
     #   dashboard_widgets=[*DEFAULT_WIDGETS, MyCustomWidget()]
+    # to extend rather than replace.
     dashboard_widgets: list[Any] | None = None
 
     # Extra i18n strings injected into the admin UI — merged on top of built-in strings.
@@ -107,6 +110,7 @@ class CoreAdminConfig:
     def from_settings(cls, settings: Any, **overrides) -> "CoreAdminConfig":
         """Build config from the env-backed Settings object.
 
+        Precedence: explicit kwargs > settings object (env-backed) > built-in defaults.
         Explicit keyword overrides always win over values loaded from settings::
 
             config = CoreAdminConfig.from_settings(

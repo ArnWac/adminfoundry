@@ -105,6 +105,24 @@ Multi-tenancy ships with two strategies: row-level (every `tenant_scoped` model 
 
 ---
 
+## Storage backends
+
+The default storage backend is `LocalStorage("uploads")`. Wire an alternative through `CoreAdminConfig.storage_backend`:
+
+```python
+from adminfoundry import create_admin, CoreAdminConfig
+from adminfoundry.extensions.storage_s3 import S3Storage
+
+config = CoreAdminConfig(
+    storage_backend=S3Storage(bucket="my-bucket", region="eu-central-1"),
+)
+app = create_admin(config=config)
+```
+
+`S3Storage` lives under `adminfoundry/extensions/` because it pulls the optional `boto3` dependency (install via `pip install adminfoundry[s3]`). It is **not** an `ExtensionBase` plugin — provider backends are wired through dedicated config fields rather than `CoreAdminConfig.extensions`. Core never eagerly imports `boto3`.
+
+---
+
 ## Feature status
 
 | Stable | Experimental | Planned |
