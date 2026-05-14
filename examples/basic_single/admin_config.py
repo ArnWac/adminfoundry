@@ -1,10 +1,10 @@
-"""Admin registrations for the single-tenant blog example."""
-from adminfoundry import (
-    ModelAdmin, admin_site,
-    BulkDeleteAction, DeactivateUsersAction, ActivateUsersAction,
-)
-from adminfoundry.auth import hash_password
-from adminfoundry.models import User
+"""Admin registrations for the single-tenant blog example.
+
+Framework models (User, AuditLog, etc.) are registered automatically by
+create_admin() with sensible defaults.  Only the app-specific Post model
+needs an explicit registration here.
+"""
+from adminfoundry import ModelAdmin, admin_site, BulkDeleteAction
 
 from examples.basic_single.models import Post
 
@@ -45,27 +45,4 @@ class PostAdmin(ModelAdmin):
     }
 
 
-class UserAdmin(ModelAdmin):
-    model           = User
-    label           = "User"
-    label_plural    = "Users"
-    description     = "Registered users"
-    list_display    = ["email", "full_name", "is_active", "is_superadmin"]
-    search_fields   = ["email", "full_name"]
-    filter_fields   = ["is_active", "is_superadmin"]
-    ordering        = ["email"]
-    readonly_fields = ["id", "created_at", "updated_at"]
-    tenant_scoped   = False
-    extra_create_fields = {"set_password": str}
-    actions = [DeactivateUsersAction(), ActivateUsersAction(), BulkDeleteAction()]
-
-    @classmethod
-    def before_create(cls, data: dict) -> dict:
-        plain = data.pop("set_password", None)
-        if plain:
-            data["hashed_password"] = hash_password(plain)
-        return data
-
-
 admin_site.register(PostAdmin())
-admin_site.register(UserAdmin())

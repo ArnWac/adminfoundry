@@ -69,6 +69,41 @@ See [`examples/basic_single/`](examples/basic_single/) for a runnable version.
 3. Call `admin_site.register(YourAdmin())` at import time.
 4. Call `app = create_admin(config=CoreAdminConfig(), title="My Admin")` to get a fully wired app.
 
+### Framework model defaults
+
+`create_admin()` automatically registers sensible admin configurations for the four built-in framework models: **User**, **Role**, **Tenant** (multi-tenant only), and **AuditLog**. You get full CRUD, search, filters, and actions for these with zero configuration.
+
+**Override** a default by registering your own class before calling `create_admin()`:
+
+```python
+from adminfoundry import ModelAdmin, admin_site
+from adminfoundry.models.user import User
+from adminfoundry.actions import DeactivateUsersAction, BulkDeleteAction
+
+class MyUserAdmin(ModelAdmin):
+    model       = User
+    list_display = ["email", "department", "is_active"]
+    extra_create_fields = {"set_password": str}
+
+    @classmethod
+    def before_create(cls, data: dict) -> dict:
+        from adminfoundry.auth import hash_password
+        plain = data.pop("set_password", None)
+        if plain:
+            data["hashed_password"] = hash_password(plain)
+        return data
+
+admin_site.register(MyUserAdmin())   # registered before create_admin() → replaces default
+app = create_admin(config=CoreAdminConfig(), title="My Admin")
+```
+
+**Add** an app-specific model the same way — framework defaults and your registrations coexist:
+
+```python
+admin_site.register(ArticleAdmin())  # app model — added on top of framework defaults
+app = create_admin(config=CoreAdminConfig(), title="My Admin")
+```
+
 Common attributes:
 
 | Attribute | Purpose |
@@ -160,8 +195,8 @@ See [`docs/roadmap-postgres-tenancy.md`](docs/roadmap-postgres-tenancy.md) for t
 
 | Example | Description |
 |---------|-------------|
-| [`examples/basic_single/`](examples/basic_single/) | Single-tenant blog: `PostAdmin` (computed fields, bulk delete) + minimal `UserAdmin`. |
-| [`examples/basic_multi/`](examples/basic_multi/) | Multi-tenant SaaS: `UserAdmin`, `RoleAdmin`, `TenantAdmin`, `AuditLogAdmin`, plus tenant-scoped `ProjectAdmin`. Seeds 1 superadmin + 2 tenants + 2 tenant admins. |
+| [`examples/basic_single/`](examples/basic_single/) | Single-tenant blog: `PostAdmin` with computed fields and bulk delete. Framework model defaults (User, AuditLog, …) require no extra code. |
+| [`examples/basic_multi/`](examples/basic_multi/) | Multi-tenant SaaS: tenant-scoped `ProjectAdmin`. Framework defaults cover User, Role, Tenant, and AuditLog automatically. Seeds 1 superadmin + 2 tenants + 2 tenant admins. |
 
 Run them:
 

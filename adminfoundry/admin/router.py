@@ -1252,6 +1252,7 @@ def create_admin(
     _setup_state(app, config)
     _install_exception_handlers(app)
     _install_middleware(app, config)
+    _install_framework_defaults(config)
     _install_core_routers(app, config)
     _install_admin_crud(app, config)
     _install_extensions(app, config)
@@ -1296,6 +1297,11 @@ def _install_exception_handlers(app) -> None:
     from fastapi.exceptions import RequestValidationError
     from adminfoundry.middleware.errors import validation_exception_handler
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
+
+
+def _install_framework_defaults(config) -> None:
+    from adminfoundry.admin.default_admins import register_framework_defaults
+    register_framework_defaults(enable_multi_tenant=config.enable_multi_tenant)
 
 
 def _install_middleware(app, config) -> None:

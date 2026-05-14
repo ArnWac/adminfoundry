@@ -26,6 +26,9 @@ TENANTS = [
 ]
 TENANT_ADMIN_PASSWORD = "admin123"  # demo only
 
+def _tenant_admin_email(slug: str) -> str:
+    return f"admin@{slug}.example.com"
+
 
 async def seed() -> None:
     async with _db.engine.begin() as conn:
@@ -64,7 +67,7 @@ async def seed() -> None:
                 session.add(role)
                 await session.flush()
 
-            email = f"admin@{slug}.test"
+            email = _tenant_admin_email(slug)
             user = (await session.execute(
                 select(User).where(User.email == email)
             )).scalars().first()
@@ -90,7 +93,7 @@ def print_banner() -> None:
     for slug, _name, _tz in TENANTS:
         tenant_lines.append(f"""  {slug}
     URL:          http://{slug}.localhost:8000/admin-ui
-    tenant admin: admin@{slug}.test
+    tenant admin: {_tenant_admin_email(slug)}
     password:     {TENANT_ADMIN_PASSWORD}
 """)
     print(f"""
