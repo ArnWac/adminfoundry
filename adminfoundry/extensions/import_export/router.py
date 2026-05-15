@@ -28,6 +28,16 @@ from adminfoundry.models.user import User
 router = APIRouter(prefix="/api/v1/admin", tags=["import-export"])
 
 
+def _jobs_ext():
+    """Return (job_service, JobStatus) if JobsExtension is importable, else None."""
+    try:
+        from adminfoundry.extensions.jobs.service import job_service
+        from adminfoundry.extensions.jobs.models import JobStatus
+        return job_service, JobStatus
+    except ImportError:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
@@ -118,10 +128,9 @@ async def export_model(
 
     rows = [_serialize(obj) for obj in items]
 
-    # Track as a job record if JobsExtension is active
-    try:
-        from adminfoundry.extensions.jobs.service import job_service
-        from adminfoundry.extensions.jobs.models import JobStatus
+    jobs = _jobs_ext()
+    if jobs is not None:
+        job_service, JobStatus = jobs
         job = await job_service.create_job(
             db, job_type="export", initiator_id=current_user.id, model_name=model_name,
         )
@@ -130,8 +139,6 @@ async def export_model(
             result_summary=f"Exported {len(rows)} rows as {format.upper()}",
             output_data={"row_count": len(rows), "format": format},
         )
-    except ImportError:
-        pass
 
     tz_label = (tz or "UTC").replace("/", "-")
     filename = f"{model_name}_export_{tz_label}"
@@ -197,10 +204,12 @@ async def import_model(
     token_payload = getattr(request.state, "token_payload", {})
 
     job = None
+    job_service = None
+    JobStatus = None
     if not body.dry_run:
-        try:
-            from adminfoundry.extensions.jobs.service import job_service
-            from adminfoundry.extensions.jobs.models import JobStatus
+        jobs = _jobs_ext()
+        if jobs is not None:
+            job_service, JobStatus = jobs
             job = await job_service.create_job(
                 db, job_type="import", initiator_id=current_user.id,
                 model_name=model_name, idempotency_key=body.idempotency_key,
@@ -210,8 +219,6 @@ async def import_model(
                     dry_run=False, total=0, success_count=0,
                     error_count=0, rows=[], job_id=job.id,
                 )
-        except ImportError:
-            pass
 
     result = await import_export_service.run_import(
         db, model_admin, body.rows, body.dry_run, current_user, token_payload,
@@ -219,8 +226,6 @@ async def import_model(
     )
 
     if job is not None:
-        from adminfoundry.extensions.jobs.service import job_service
-        from adminfoundry.extensions.jobs.models import JobStatus
         final = JobStatus.completed if result.error_count == 0 else JobStatus.failed
         await job_service.update_status(
             db, job, final, progress=100,
@@ -278,9 +283,11 @@ async def bulk_action(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Action not permitted")
 
     job = None
-    try:
-        from adminfoundry.extensions.jobs.service import job_service
-        from adminfoundry.extensions.jobs.models import Job, JobStatus
+    job_service = None
+    JobStatus = None
+    jobs = _jobs_ext()
+    if jobs is not None:
+        job_service, JobStatus = jobs
         job = await job_service.create_job(
             db, job_type="bulk_action", initiator_id=current_user.id,
             model_name=model_name, action_name=body.action,
@@ -292,8 +299,6 @@ async def bulk_action(
                 "job_id": str(job.id), "status": job.status,
                 "message": "Duplicate submission — existing job returned",
             }
-    except ImportError:
-        pass
 
     objects = (
         await db.execute(
@@ -308,14 +313,10 @@ async def bulk_action(
             result_summary = result.get("summary", result_summary)
     except Exception as exc:
         if job is not None:
-            from adminfoundry.extensions.jobs.service import job_service
-            from adminfoundry.extensions.jobs.models import JobStatus
             await job_service.update_status(db, job, JobStatus.failed, failure_summary=str(exc))
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
 
     if job is not None:
-        from adminfoundry.extensions.jobs.service import job_service
-        from adminfoundry.extensions.jobs.models import JobStatus
         job = await job_service.update_status(
             db, job, JobStatus.completed, progress=100,
             result_summary=result_summary,

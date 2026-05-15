@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -64,11 +65,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         runtime = getattr(getattr(request.app, "state", None), "adminfoundry", None)
         if runtime is not None:
-            await runtime.event_bus.emit("request_finished", {
+            asyncio.create_task(runtime.event_bus.emit("request_finished", {
                 "method": request.method,
                 "path": request.url.path,
                 "status": response.status_code,
                 "duration_ms": duration_ms,
-            })
+            }))
 
         return response

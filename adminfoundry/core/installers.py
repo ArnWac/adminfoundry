@@ -135,6 +135,7 @@ def install_extensions(app: "FastAPI", runtime: "AdminRuntime") -> None:
     """
     from adminfoundry.admin.dashboard.builtins import DEFAULT_WIDGETS
     from adminfoundry.admin.dashboard.registry import dashboard_registry as _legacy_dashboard
+    from adminfoundry.admin.registry import admin_site as _admin_site
     from adminfoundry.extensions import extension_registry as _legacy_ext
     config = runtime.config
 
@@ -153,7 +154,6 @@ def install_extensions(app: "FastAPI", runtime: "AdminRuntime") -> None:
         _legacy_ext.register(ext)
         ext.get_models()  # import side-effect registers extension tables with Base.metadata
         for ma in ext.get_admin_registrations():
-            from adminfoundry.admin.registry import admin_site as _admin_site
             _admin_site.register(ma)
         for ext_router in ext.get_routers():
             app.include_router(ext_router)

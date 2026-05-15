@@ -8,9 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from adminfoundry.admin.registry import admin_site
 
 
+def _get_runtime(request: Request):
+    return getattr(getattr(request.app, "state", None), "adminfoundry", None)
+
+
 def _get_multi_tenant_flag(request: Request) -> bool:
     """Read enable_multi_tenant from per-app runtime; fall back to settings for legacy apps."""
-    runtime = getattr(getattr(request.app, "state", None), "adminfoundry", None)
+    runtime = _get_runtime(request)
     if runtime is not None:
         return runtime.config.enable_multi_tenant
     from adminfoundry.settings import settings
@@ -122,7 +126,7 @@ def _check_model_access(model_admin, user, token_payload: dict, tenant=None, mul
 
 def _require_superadmin_or_impersonating(user, token_payload: dict, request: Request) -> None:
     """Allow superadmin (root panel or impersonating) OR tenant admin in their own tenant."""
-    runtime = getattr(getattr(request.app, "state", None), "adminfoundry", None)
+    runtime = _get_runtime(request)
     if runtime is not None:
         provider = runtime.auth_provider
     else:
