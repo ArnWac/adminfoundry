@@ -70,8 +70,6 @@ def install_state(app: "FastAPI", runtime: "AdminRuntime") -> None:
         validate_user_model(config.user_model)
         runtime.auth_provider.user_model = config.user_model
 
-    app.state.auth_provider = runtime.auth_provider
-
     from adminfoundry import cache as _cache_mod, storage as _storage_mod, i18n as _i18n_mod
     if config.cache_backend:
         _cache_mod.configure(config.cache_backend)

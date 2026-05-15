@@ -6,27 +6,24 @@ from adminfoundry.database import get_db
 router = APIRouter(tags=["health"])
 
 
-@router.get("/health")
-async def health(db: AsyncSession = Depends(get_db)):
+async def _check_db(db: AsyncSession) -> str:
     try:
         await db.execute(text("SELECT 1"))
-        db_status = "ok"
+        return "ok"
     except Exception:
-        db_status = "degraded"
+        return "degraded"
 
-    overall = "ok" if db_status == "ok" else "degraded"
-    return {"status": overall, "db": db_status}
+
+@router.get("/health")
+async def health(db: AsyncSession = Depends(get_db)):
+    db_status = await _check_db(db)
+    return {"status": db_status, "db": db_status}
 
 
 @router.get("/health/dashboard")
 async def health_dashboard(request: Request, db: AsyncSession = Depends(get_db)):
     """Aggregated ops view: DB, active sessions, rate-limit summary, extension health."""
-    # DB check
-    try:
-        await db.execute(text("SELECT 1"))
-        db_status = "ok"
-    except Exception:
-        db_status = "degraded"
+    db_status = await _check_db(db)
 
     # Active sessions
     try:
