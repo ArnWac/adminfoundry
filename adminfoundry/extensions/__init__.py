@@ -70,6 +70,13 @@ class ExtensionBase(ABC):
     # Lifecycle hooks
     # ------------------------------------------------------------------
 
+    def on_startup(self, app: Any, runtime: Any) -> None:
+        """Called after all extensions are registered, before the app starts serving.
+
+        Override to subscribe to runtime.event_bus, set up background tasks, etc.
+        ``app`` is the FastAPI instance; ``runtime`` is ``app.state.adminfoundry``.
+        """
+
     def startup_check(self) -> None:
         """Raise RuntimeError if the extension cannot start.
 

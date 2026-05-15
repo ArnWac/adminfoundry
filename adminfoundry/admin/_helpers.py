@@ -6,7 +6,15 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from adminfoundry.admin.registry import admin_site
-from adminfoundry.settings import settings
+
+
+def _get_multi_tenant_flag(request: Request) -> bool:
+    """Read enable_multi_tenant from per-app runtime; fall back to settings for legacy apps."""
+    runtime = getattr(getattr(request.app, "state", None), "adminfoundry", None)
+    if runtime is not None:
+        return runtime.config.enable_multi_tenant
+    from adminfoundry.settings import settings
+    return settings.MULTI_TENANT
 
 
 async def _enforce_method_caps(
@@ -49,7 +57,7 @@ def _get_admin_or_404(model_name: str):
     return model_admin
 
 
-def _check_model_access(model_admin, user, token_payload: dict, tenant=None) -> None:
+def _check_model_access(model_admin, user, token_payload: dict, tenant=None, multi_tenant: bool = False) -> None:
     """Raise 403 if the user lacks access to this model's admin CRUD interface.
 
     Superadmin without impersonation token in a tenant context → 403 (must use impersonation).
@@ -58,12 +66,12 @@ def _check_model_access(model_admin, user, token_payload: dict, tenant=None) -> 
     is_impersonating = bool(token_payload.get("impersonated_by"))
 
     if user.is_superadmin and not is_impersonating:
-        if settings.MULTI_TENANT and tenant is not None:
+        if multi_tenant and tenant is not None:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Use an impersonation token to access tenant panels",
             )
-        if settings.MULTI_TENANT and tenant is None and model_admin.tenant_scoped:
+        if multi_tenant and tenant is None and model_admin.tenant_scoped:
             # global_only_in_root_panel models are accessible from the root panel;
             # _tenant_filter applies WHERE tenant_id IS NULL to scope to global records.
             if not getattr(model_admin, "global_only_in_root_panel", False):
@@ -114,8 +122,12 @@ def _check_model_access(model_admin, user, token_payload: dict, tenant=None) -> 
 
 def _require_superadmin_or_impersonating(user, token_payload: dict, request: Request) -> None:
     """Allow superadmin (root panel or impersonating) OR tenant admin in their own tenant."""
-    from adminfoundry.auth_provider import AuthProvider
-    provider = getattr(request.app.state, "auth_provider", AuthProvider())
+    runtime = getattr(getattr(request.app, "state", None), "adminfoundry", None)
+    if runtime is not None:
+        provider = runtime.auth_provider
+    else:
+        from adminfoundry.auth_provider import AuthProvider
+        provider = AuthProvider()
     if provider.is_superadmin(user):
         return
     tenant = getattr(request.state, "tenant", None)
@@ -134,7 +146,7 @@ def _tenant_filter(request: Request, model_admin):
     Root panel, global model    → WHERE tenant_id IS NULL
     Root panel, non-scoped      → no filter (superadmin sees all)
     """
-    if not model_admin.tenant_scoped or not settings.MULTI_TENANT:
+    if not model_admin.tenant_scoped or not _get_multi_tenant_flag(request):
         return None
     if not hasattr(model_admin.model, "tenant_id"):
         return None

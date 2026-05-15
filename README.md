@@ -29,10 +29,8 @@ pip install adminfoundry[xlsx]    # Excel (.xlsx) export
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import String
 
-from adminfoundry import (
-    create_admin, CoreAdminConfig, ModelAdmin, admin_site,
-    BulkDeleteAction,
-)
+from adminfoundry import create_admin, CoreAdminConfig, ModelAdmin, admin_site
+from adminfoundry.actions import BulkDeleteAction
 from adminfoundry.models.base import TimestampedBase
 
 
@@ -56,7 +54,7 @@ admin_site.register(ArticleAdmin())
 app = create_admin(config=CoreAdminConfig(), title="My Admin")
 ```
 
-`create_admin()` is a factory: it creates the FastAPI app, installs all core middleware, routers, and the built-in UI, and returns the configured app. Pass an existing app as the first argument to mount AdminFoundry onto it instead.
+`create_admin()` is a factory: it creates the FastAPI app, installs all core middleware, routers, and the built-in UI, and returns the configured app.
 
 See [`examples/basic_single/`](examples/basic_single/) for a runnable version.
 
@@ -140,6 +138,52 @@ Multi-tenancy ships with two strategies: row-level (every `tenant_scoped` model 
 
 ---
 
+## Extensions
+
+Optional extensions are registered via `CoreAdminConfig.extensions`. Each extension implements `ExtensionBase` and can contribute routers, models, dashboard widgets, admin registrations, and an EventBus subscription.
+
+```python
+from adminfoundry import create_admin, CoreAdminConfig
+from adminfoundry.extensions.jobs import JobsExtension
+from adminfoundry.extensions.import_export import ImportExportExtension
+from adminfoundry.extensions.observability import ObservabilityExtension
+from adminfoundry.extensions.webhooks import WebhookExtension
+
+app = create_admin(
+    config=CoreAdminConfig(
+        extensions=[
+            JobsExtension(),
+            ImportExportExtension(),   # requires JobsExtension
+            ObservabilityExtension(),  # subscribes to EventBus metrics
+            WebhookExtension(),        # HTTP delivery of admin signal events
+        ],
+    ),
+    title="My Admin",
+)
+```
+
+**Available extensions:**
+
+| Extension | Provides |
+|-----------|----------|
+| `JobsExtension` | Background job model, status tracking (`GET /api/v1/jobs`) |
+| `ImportExportExtension` | CSV/JSON/XLSX export, dry-run import, bulk actions (`/api/v1/admin/{model}/export` etc.) |
+| `ObservabilityExtension` | Request counters, audit-failure metrics, Prometheus export, dashboard widget |
+| `WebhookExtension` | HTTP delivery of signal events, admin CRUD for subscriptions, HMAC signing |
+| `WorkflowsExtension` | Change-approval workflow for sensitive fields |
+
+**Root-level submodule paths for non-root exports:**
+
+```python
+from adminfoundry.actions import BulkDeleteAction, DeactivateUsersAction
+from adminfoundry.admin.dashboard.widget import DashboardWidget
+from adminfoundry.cache import cache
+from adminfoundry.storage import storage
+from adminfoundry.i18n import t
+```
+
+---
+
 ## Storage backends
 
 The default storage backend is `LocalStorage("uploads")`. Wire an alternative through `CoreAdminConfig.storage_backend`:
@@ -164,7 +208,7 @@ app = create_admin(config=config)
 |--------|--------------|---------|
 | Registry / `ModelAdmin` | Multi-tenancy (SQLite-tested only) | PostgreSQL schema multi-tenancy (end-to-end) |
 | Dynamic schema builder + serializer | Approval workflow (backend only) | SCIM / SAML |
-| CRUD routes | Webhooks / signals | Flutter / external UI |
+| CRUD routes | Signals | Flutter / external UI |
 | Contract API (`/api/v1/admin/...`) | Dashboard widgets | Billing / metering |
 | Protected field handling | Background jobs extension | White-labeling |
 | JWT auth + RBAC | CSV import | Advanced workflow approvals |

@@ -391,7 +391,7 @@ def test_cross_tenant_impersonation_rejected():
 def test_superadmin_blocked_from_tenant_scoped_in_root_panel():
     """Superadmin without impersonation token gets 403 on tenant-scoped model with MULTI_TENANT=True."""
     import pytest
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock
     from fastapi import HTTPException
     from adminfoundry.admin._helpers import _check_model_access
 
@@ -402,15 +402,14 @@ def test_superadmin_blocked_from_tenant_scoped_in_root_panel():
     user = MagicMock()
     user.is_superadmin = True
 
-    with patch("adminfoundry.settings.settings.MULTI_TENANT", True):
-        with pytest.raises(HTTPException) as exc_info:
-            _check_model_access(model_admin, user, {}, tenant=None)
+    with pytest.raises(HTTPException) as exc_info:
+        _check_model_access(model_admin, user, {}, tenant=None, multi_tenant=True)
     assert exc_info.value.status_code == 403
 
 
 def test_superadmin_allowed_global_only_in_root_panel():
     """Superadmin can access tenant_scoped models with global_only_in_root_panel=True from root panel."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock
     from adminfoundry.admin._helpers import _check_model_access
 
     model_admin = MagicMock()
@@ -420,9 +419,8 @@ def test_superadmin_allowed_global_only_in_root_panel():
     user = MagicMock()
     user.is_superadmin = True
 
-    with patch("adminfoundry.settings.settings.MULTI_TENANT", True):
-        # Should not raise
-        _check_model_access(model_admin, user, {}, tenant=None)
+    # Should not raise
+    _check_model_access(model_admin, user, {}, tenant=None, multi_tenant=True)
 
 
 def test_tenant_admin_access_in_correct_tenant():

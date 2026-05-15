@@ -22,6 +22,10 @@ class ImportExportExtension(ExtensionBase):
             "row_level_errors": True,
         }
 
+    def get_routers(self):
+        from adminfoundry.extensions.import_export.router import router
+        return [router]
+
     def startup_check(self) -> None:
         try:
             from adminfoundry.extensions.import_export.service import ImportExportService  # noqa: F401

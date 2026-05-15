@@ -2,6 +2,16 @@ import uuid
 from datetime import datetime
 from pydantic import BaseModel
 
+# Import/export and bulk-action schemas live in the import_export extension.
+# These re-exports keep existing callers working during migration.
+from adminfoundry.extensions.import_export.schemas import (  # noqa: F401
+    BulkActionRequest,
+    ExportResult,
+    ImportRequest,
+    ImportResult,
+    ImportRowResult,
+)
+
 
 class JobRead(BaseModel):
     model_config = {"from_attributes": True}
@@ -18,39 +28,3 @@ class JobRead(BaseModel):
     progress: int | None
     result_summary: str | None
     failure_summary: str | None
-
-
-class BulkActionRequest(BaseModel):
-    action: str
-    object_ids: list[uuid.UUID]
-    confirm: bool = False
-    idempotency_key: str | None = None
-
-
-class ImportRowResult(BaseModel):
-    row_index: int
-    success: bool
-    errors: list[str] = []
-    data: dict | None = None
-
-
-class ImportRequest(BaseModel):
-    rows: list[dict]
-    dry_run: bool = True
-    idempotency_key: str | None = None
-
-
-class ImportResult(BaseModel):
-    dry_run: bool
-    total: int
-    success_count: int
-    error_count: int
-    rows: list[ImportRowResult]
-    job_id: uuid.UUID | None = None
-
-
-class ExportResult(BaseModel):
-    job_id: uuid.UUID
-    status: str
-    row_count: int | None
-    data: list[dict] | None = None

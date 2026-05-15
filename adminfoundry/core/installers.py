@@ -96,14 +96,11 @@ def install_middleware(app: "FastAPI", runtime: "AdminRuntime") -> None:
     from adminfoundry.middleware.security_headers import SecurityHeadersMiddleware
     from adminfoundry.middleware.rate_limit import RateLimitMiddleware
     from adminfoundry.middleware.logging import RequestLoggingMiddleware
-    from adminfoundry.settings import settings as _settings
     config = runtime.config
 
     app.add_middleware(UnhandledExceptionMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     if config.enable_multi_tenant:
-        _settings.MULTI_TENANT = True
-        _settings.TENANT_RESOLUTION_STRATEGY = config.tenant_resolution
         from adminfoundry.tenancy.middleware import TenantMiddleware
         app.add_middleware(TenantMiddleware)
     app.add_middleware(RateLimitMiddleware)
@@ -155,11 +152,15 @@ def install_extensions(app: "FastAPI", runtime: "AdminRuntime") -> None:
         runtime.extension_registry.register(ext)
         _legacy_ext.register(ext)
         ext.get_models()  # import side-effect registers extension tables with Base.metadata
+        for ma in ext.get_admin_registrations():
+            from adminfoundry.admin.registry import admin_site as _admin_site
+            _admin_site.register(ma)
         for ext_router in ext.get_routers():
             app.include_router(ext_router)
         for w in ext.get_dashboard_widgets():
             runtime.dashboard_registry.register(w)
             _legacy_dashboard.register(w)
+        ext.on_startup(app, runtime)
 
 
 def install_builtin_ui(app: "FastAPI", runtime: "AdminRuntime") -> None:

@@ -33,6 +33,21 @@ class ObservabilityExtension(ExtensionBase):
     def get_dashboard_widgets(self) -> list:
         return [AdminMetricsWidget()]
 
+    def on_startup(self, app, runtime) -> None:
+        from adminfoundry.extensions.observability.admin_metrics import (
+            increment_requests,
+            record_audit_failure,
+        )
+
+        async def _on_request_finished(payload: dict) -> None:
+            increment_requests(error=payload.get("status", 200) >= 500)
+
+        async def _on_audit_failed(payload: dict) -> None:
+            record_audit_failure()
+
+        runtime.event_bus.subscribe("request_finished", _on_request_finished)
+        runtime.event_bus.subscribe("audit_write_failed", _on_audit_failed)
+
     def startup_check(self) -> None:
         from adminfoundry.extensions.observability.admin_metrics import get_snapshot  # noqa: F401
 

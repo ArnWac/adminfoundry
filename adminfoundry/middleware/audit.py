@@ -8,15 +8,19 @@ from starlette.background import BackgroundTask, BackgroundTasks
 from starlette.middleware.base import BaseHTTPMiddleware
 
 
-async def _write_audit(log_data: dict) -> None:
+async def _write_audit(log_data: dict, event_bus=None) -> None:
     try:
         from adminfoundry.database import AsyncSessionLocal
         from adminfoundry.models.audit_log import AuditLog
         async with AsyncSessionLocal() as session:
             session.add(AuditLog(**log_data))
             await session.commit()
-    except Exception:
-        pass
+    except Exception as exc:
+        if event_bus is not None:
+            await event_bus.emit("audit_write_failed", {
+                "path": log_data.get("path"),
+                "error": str(exc),
+            })
 
 
 _MUTABLE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
@@ -59,7 +63,9 @@ class AuditMiddleware(BaseHTTPMiddleware):
                 "changes": getattr(request.state, "audit_changes", None),
                 "ip_address": ip,
             }
-            audit_task = BackgroundTask(_write_audit, log_data)
+            runtime = getattr(getattr(request.app, "state", None), "adminfoundry", None)
+            _event_bus = runtime.event_bus if runtime is not None else None
+            audit_task = BackgroundTask(_write_audit, log_data, _event_bus)
             if response.background is None:
                 response.background = audit_task
             else:

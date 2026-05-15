@@ -148,12 +148,12 @@ async def test_middleware_disabled_tenant_blocked(db: AsyncSession, db_engine):
         async with factory() as s:
             yield s
 
+    from adminfoundry import create_admin, CoreAdminConfig
+    header_app = create_admin(config=CoreAdminConfig(enable_multi_tenant=True, tenant_resolution="header"))
     with patch.object(tenant_mod, "AsyncSessionLocal", fake_session_local):
-        with patch("adminfoundry.settings.settings.MULTI_TENANT", True):
-            with patch("adminfoundry.settings.settings.TENANT_RESOLUTION_STRATEGY", "header"):
-                transport = ASGITransport(app=main_app)
-                async with AsyncClient(transport=transport, base_url="http://test") as ac:
-                    resp = await ac.get("/health", headers={"X-Tenant-Slug": "disabled-co"})
+        transport = ASGITransport(app=header_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/health", headers={"X-Tenant-Slug": "disabled-co"})
     assert resp.status_code == 403
 
 
@@ -172,12 +172,12 @@ async def test_middleware_unknown_tenant_404(db: AsyncSession, db_engine):
         async with factory() as s:
             yield s
 
+    from adminfoundry import create_admin, CoreAdminConfig
+    header_app = create_admin(config=CoreAdminConfig(enable_multi_tenant=True, tenant_resolution="header"))
     with patch.object(tenant_mod, "AsyncSessionLocal", fake_session_local):
-        with patch("adminfoundry.settings.settings.MULTI_TENANT", True):
-            with patch("adminfoundry.settings.settings.TENANT_RESOLUTION_STRATEGY", "header"):
-                transport = ASGITransport(app=main_app)
-                async with AsyncClient(transport=transport, base_url="http://test") as ac:
-                    resp = await ac.get("/health", headers={"X-Tenant-Slug": "no-such-tenant"})
+        transport = ASGITransport(app=header_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/health", headers={"X-Tenant-Slug": "no-such-tenant"})
     assert resp.status_code == 404
 
 

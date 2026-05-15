@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from adminfoundry.admin.schema_builder import schema_builder
 from adminfoundry.admin.serializer import serializer
 from adminfoundry.authz.policy_engine import policy_engine
-from adminfoundry.extensions.jobs.schemas import ImportResult, ImportRowResult
+from adminfoundry.extensions.import_export.schemas import ImportResult, ImportRowResult
 
 
 class ImportExportService:

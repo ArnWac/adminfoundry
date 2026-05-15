@@ -6,15 +6,11 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
-from adminfoundry.settings import settings
 from adminfoundry.tenancy.resolver import _extract_slug, resolve_tenant
 
 
 class TenantMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        if not settings.MULTI_TENANT:
-            return await call_next(request)
-
         slug = _extract_slug(request)
         if not slug:
             request.state.tenant = None

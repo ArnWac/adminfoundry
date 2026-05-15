@@ -45,7 +45,9 @@ async def get_admin_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
     session bound to the tenant engine (search_path = tenant_schema, public).
     Falls back to the shared session otherwise.
     """
-    if settings.MULTI_TENANT:
+    runtime = getattr(getattr(request.app, "state", None), "adminfoundry", None)
+    multi_tenant = runtime.config.enable_multi_tenant if runtime is not None else settings.MULTI_TENANT
+    if multi_tenant:
         tenant = getattr(request.state, "tenant", None)
         if tenant is not None:
             from adminfoundry.tenancy.schema_strategy import get_tenant_session

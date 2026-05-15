@@ -13,6 +13,7 @@ from adminfoundry.admin._helpers import (
     _check_model_access,
     _enforce_method_caps,
     _get_admin_or_404,
+    _get_multi_tenant_flag,
     _model_supports_soft_delete,
     _tenant_filter,
     _validate_body,
@@ -28,7 +29,6 @@ from adminfoundry.dependencies import get_current_user, require_superadmin
 from adminfoundry.models.user import User
 from adminfoundry.pagination import paginate
 from adminfoundry.schemas.policy import FieldPolicyMeta, ModelPolicyResponse
-from adminfoundry.settings import settings
 
 router = APIRouter()
 
@@ -47,7 +47,7 @@ async def list_objects(
 ):
     model_admin = _get_admin_or_404(model_name)
     payload = getattr(request.state, "token_payload", {})
-    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None), multi_tenant=_get_multi_tenant_flag(request))
     await _enforce_method_caps(model_admin, current_user, payload, "list", db)
 
     stmt = select(model_admin.model)
@@ -96,7 +96,7 @@ async def create_object(
 ):
     model_admin = _get_admin_or_404(model_name)
     payload = getattr(request.state, "token_payload", {})
-    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None), multi_tenant=_get_multi_tenant_flag(request))
     await _enforce_method_caps(model_admin, current_user, payload, "create", db)
 
     create_schema = schema_builder.build_create_schema(model_admin)
@@ -113,7 +113,7 @@ async def create_object(
 
     data = model_admin.before_create(validated.model_dump(exclude_none=True))
 
-    if model_admin.tenant_scoped and settings.MULTI_TENANT and hasattr(model_admin.model, "tenant_id"):
+    if model_admin.tenant_scoped and _get_multi_tenant_flag(request) and hasattr(model_admin.model, "tenant_id"):
         tenant = getattr(request.state, "tenant", None)
         if tenant is not None:
             data.setdefault("tenant_id", str(tenant.id))
@@ -167,7 +167,7 @@ async def import_objects(
     if not getattr(model_admin, "allow_import", False):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Import not enabled for this model")
     payload = getattr(request.state, "token_payload", {})
-    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None), multi_tenant=_get_multi_tenant_flag(request))
     await _enforce_method_caps(model_admin, current_user, payload, "create", db)
 
     content = await file.read()
@@ -230,7 +230,7 @@ async def model_meta(
     """Return full field and action contract metadata for a registered model."""
     model_admin = _get_admin_or_404(model_name)
     payload = getattr(request.state, "token_payload", {})
-    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None), multi_tenant=_get_multi_tenant_flag(request))
     return build_model_contract(model_admin, registry=admin_site)
 
 
@@ -247,7 +247,7 @@ async def lookup_objects(
     """Generic async relation-selection lookup — returns lightweight {id, label} items."""
     model_admin = _get_admin_or_404(model_name)
     payload = getattr(request.state, "token_payload", {})
-    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None), multi_tenant=_get_multi_tenant_flag(request))
 
     stmt = select(model_admin.model)
 
@@ -331,7 +331,7 @@ async def bulk_action_direct(
 
     model_admin = _get_admin_or_404(model_name)
     payload = getattr(request.state, "token_payload", {})
-    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None), multi_tenant=_get_multi_tenant_flag(request))
 
     body = await request.json()
     action_name: str = body.get("action", "")
@@ -410,7 +410,7 @@ async def get_object(
 ):
     model_admin = _get_admin_or_404(model_name)
     payload = getattr(request.state, "token_payload", {})
-    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None), multi_tenant=_get_multi_tenant_flag(request))
     await _enforce_method_caps(model_admin, current_user, payload, "read", db)
 
     obj = (
@@ -439,7 +439,7 @@ async def update_object(
 ):
     model_admin = _get_admin_or_404(model_name)
     payload = getattr(request.state, "token_payload", {})
-    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None), multi_tenant=_get_multi_tenant_flag(request))
     await _enforce_method_caps(model_admin, current_user, payload, "update", db)
 
     update_schema = schema_builder.build_update_schema(model_admin)
@@ -495,7 +495,7 @@ async def delete_object(
     if not getattr(model_admin, "allow_delete", True):
         raise HTTPException(status_code=status.HTTP_405_METHOD_NOT_ALLOWED, detail="Deletion not allowed for this model")
     payload = getattr(request.state, "token_payload", {})
-    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None), multi_tenant=_get_multi_tenant_flag(request))
     await _enforce_method_caps(model_admin, current_user, payload, "delete", db)
 
     obj = (
@@ -541,7 +541,7 @@ async def restore_object(
     if not _model_supports_soft_delete(model_admin):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Soft-delete not enabled for this model")
     payload = getattr(request.state, "token_payload", {})
-    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None), multi_tenant=_get_multi_tenant_flag(request))
 
     obj = (
         await db.execute(
@@ -575,7 +575,7 @@ async def hard_delete_object(
     if not getattr(model_admin, "allow_delete", True):
         raise HTTPException(status_code=status.HTTP_405_METHOD_NOT_ALLOWED, detail="Deletion not allowed for this model")
     payload = getattr(request.state, "token_payload", {})
-    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None))
+    _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None), multi_tenant=_get_multi_tenant_flag(request))
 
     obj = (
         await db.execute(select(model_admin.model).where(model_admin.model.id == object_id))

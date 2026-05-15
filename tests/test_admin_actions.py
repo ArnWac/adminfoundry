@@ -12,14 +12,15 @@ from adminfoundry.actions import DeactivateUsersAction
 from adminfoundry.auth import create_access_token, hash_password
 from adminfoundry.models.user import User
 
-# Mount the jobs router on the shared test app (it's opt-in and not in the default config)
+# Mount opt-in extension routers on the shared test app (not in default config)
 from adminfoundry.extensions.jobs.router import router as _jobs_router
+from adminfoundry.extensions.import_export.router import router as _ie_router
 from examples.basic_multi.app import app as _app
-_already_mounted = any(
-    getattr(r, "path", "").startswith("/api/v1/jobs") for r in _app.routes
-)
-if not _already_mounted:
+_route_paths = {getattr(r, "path", "") for r in _app.routes}
+if "/api/v1/jobs" not in _route_paths:
     _app.include_router(_jobs_router)
+if "/api/v1/admin/{model_name}/bulk" not in _route_paths:
+    _app.include_router(_ie_router)
 
 
 def auth(user: User) -> dict:
@@ -46,7 +47,7 @@ async def test_bulk_deactivate_via_endpoint(
     target = await _make_user(db, "bulk_target@example.com", active=True)
 
     resp = await client.post(
-        "/api/v1/jobs/admin/users/bulk",
+        "/api/v1/admin/users/bulk",
         json={
             "action": "deactivate",
             "object_ids": [str(target.id)],
@@ -69,7 +70,7 @@ async def test_bulk_unknown_action_returns_400(
     client: AsyncClient, superadmin: User
 ):
     resp = await client.post(
-        "/api/v1/jobs/admin/users/bulk",
+        "/api/v1/admin/users/bulk",
         json={"action": "nonexistent", "object_ids": [], "confirm": True},
         headers=auth(superadmin),
     )
@@ -81,7 +82,7 @@ async def test_bulk_missing_confirm_returns_422(
     client: AsyncClient, superadmin: User
 ):
     resp = await client.post(
-        "/api/v1/jobs/admin/users/bulk",
+        "/api/v1/admin/users/bulk",
         json={"action": "deactivate", "object_ids": [], "confirm": False},
         headers=auth(superadmin),
     )
@@ -102,7 +103,7 @@ async def test_bulk_action_execute_exception_marks_job_failed(
 
     target = await _make_user(db, "fail_target@example.com")
     resp = await client.post(
-        "/api/v1/jobs/admin/users/bulk",
+        "/api/v1/admin/users/bulk",
         json={
             "action": "deactivate",
             "object_ids": [str(target.id)],

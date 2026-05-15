@@ -1,17 +1,18 @@
-"""Webhook dispatcher — register HTTP endpoints to receive signal events.
+"""Webhook extension — HTTP delivery of admin signal events.
 
-Developer-facing: configure programmatically in your app startup or admin_config.py.
-No database table, no admin UI required.
+Enable by adding WebhookExtension() to CoreAdminConfig.extensions::
 
-Usage::
+    from adminfoundry.extensions.webhooks import WebhookExtension
+    app = create_admin(config=CoreAdminConfig(extensions=[WebhookExtension()]))
 
-    from adminfoundry.extensions import webhooks
+Subscriptions can be managed via the admin UI (/api/v1/admin/webhook-subscriptions)
+or registered imperatively at startup::
 
-    webhooks.register(
-        url="https://my-service.com/hooks/adminfoundry",
-        events=["post_create", "post_update", "post_delete"],
-        secret="my-hmac-secret",        # HMAC-SHA256 as X-Signature-256 header
-        model_filter=["articles"],      # optional — omit to receive all models
+    from adminfoundry.extensions.webhooks import register
+    register(
+        url="https://my-service.com/hooks",
+        events=["post_create", "post_delete"],
+        secret="hmac-secret",
     )
 
 Payload shape::
@@ -24,17 +25,6 @@ Payload shape::
         "actor":      "admin@example.com",
         "changes":    {...} or null
     }
-
-Signature verification (receiving end)::
-
-    import hashlib, hmac
-    body = request.body()
-    expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    assert hmac.compare_digest(expected, request.headers["X-Signature-256"])
-
-Available events:
-    post_create, post_update, pre_delete, post_delete,
-    post_login, post_logout, post_password_change
 """
 from __future__ import annotations
 
@@ -44,6 +34,12 @@ import json
 import time
 from typing import Any, Callable
 
+from adminfoundry.extensions import ExtensionBase
+
+
+# ---------------------------------------------------------------------------
+# In-process dispatcher (imperative API — used alongside DB subscriptions)
+# ---------------------------------------------------------------------------
 
 class _WebhookTarget:
     __slots__ = ("url", "events", "secret", "model_filter")
@@ -77,13 +73,7 @@ def register(
     secret: str | None = None,
     model_filter: list[str] | None = None,
 ) -> None:
-    """Register an HTTP endpoint to receive admin signal events.
-
-    url          — HTTP(S) endpoint to POST to
-    events       — signal events to subscribe to
-    secret       — when set, every request carries X-Signature-256 (HMAC-SHA256)
-    model_filter — restrict to specific model names; None = all models
-    """
+    """Register an HTTP endpoint to receive admin signal events."""
     from adminfoundry import signals as _signals
 
     target = _WebhookTarget(url, events, secret, model_filter)
@@ -98,6 +88,11 @@ def register(
 
     for event in events:
         _signals.connect(event, _make_handler(event))
+
+
+def clear() -> None:
+    """Deregister all in-process webhooks — useful in tests."""
+    _targets.clear()
 
 
 def _build_payload(event: str, kwargs: Any) -> dict:
@@ -121,9 +116,7 @@ async def _post(target: _WebhookTarget, payload: dict) -> None:
     try:
         import httpx
     except ImportError:
-        raise RuntimeError(
-            "adminfoundry webhooks require httpx: pip install httpx"
-        )
+        raise RuntimeError("adminfoundry webhooks require httpx: pip install httpx")
     body = json.dumps(payload, default=str).encode()
     headers: dict[str, str] = {
         "Content-Type": "application/json",
@@ -138,9 +131,53 @@ async def _post(target: _WebhookTarget, payload: dict) -> None:
         pass  # webhook delivery failures must never affect the main request path
 
 
-def clear() -> None:
-    """Deregister all webhooks — useful in tests."""
-    _targets.clear()
+# ---------------------------------------------------------------------------
+# ExtensionBase implementation
+# ---------------------------------------------------------------------------
+
+class WebhookExtension(ExtensionBase):
+    """Webhook delivery extension.
+
+    Registers WebhookSubscription and WebhookDelivery models, exposes admin
+    CRUD routes for managing subscriptions, and provides the in-process
+    dispatcher as a fallback delivery path.
+    """
+
+    name = "webhooks"
+    version = "0.1.0"
+    is_optional = True
+
+    def get_models(self) -> list:
+        from adminfoundry.extensions.webhooks.models import WebhookDelivery, WebhookSubscription
+        return [WebhookSubscription, WebhookDelivery]
+
+    def get_admin_registrations(self) -> list:
+        from adminfoundry.admin.model_admin import ModelAdmin
+        from adminfoundry.extensions.webhooks.models import WebhookSubscription
+
+        class WebhookSubscriptionAdmin(ModelAdmin):
+            model = WebhookSubscription
+            list_display = ["url", "events", "is_active", "created_at"]
+            readonly_fields = ["id", "created_at", "updated_at"]
+            search_fields = ["url"]
+            filter_fields = ["is_active"]
+
+        return [WebhookSubscriptionAdmin()]
+
+    def get_capabilities(self) -> dict:
+        return {
+            "http_delivery": True,
+            "hmac_signing": True,
+            "model_filter": True,
+        }
+
+    def health_check(self) -> dict:
+        return {
+            "status": "ok",
+            "extension": self.name,
+            "version": self.version,
+            "registered_targets": len(_targets),
+        }
 
 
-__all__ = ["register", "clear"]
+__all__ = ["WebhookExtension", "register", "clear"]

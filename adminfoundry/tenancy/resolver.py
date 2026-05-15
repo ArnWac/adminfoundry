@@ -61,8 +61,15 @@ async def _redis_set(client, slug: str, ctx: TenantContext | None) -> None:
     await client.setex(f"{_REDIS_PREFIX}{slug}", _TENANT_TTL, value)
 
 
+def _get_resolution_strategy(request: Request) -> str:
+    runtime = getattr(getattr(request.app, "state", None), "adminfoundry", None)
+    if runtime is not None:
+        return runtime.config.tenant_resolution or "header"
+    return settings.TENANT_RESOLUTION_STRATEGY
+
+
 def _extract_slug(request: Request) -> str | None:
-    if settings.TENANT_RESOLUTION_STRATEGY == "subdomain":
+    if _get_resolution_strategy(request) == "subdomain":
         host = request.headers.get("host", "").split(":")[0]
         parts = host.split(".")
         if len(parts) >= 2:

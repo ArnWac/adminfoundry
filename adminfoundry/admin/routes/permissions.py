@@ -8,12 +8,11 @@ import uuid
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from adminfoundry.admin._helpers import _require_superadmin_or_impersonating
+from adminfoundry.admin._helpers import _get_multi_tenant_flag, _require_superadmin_or_impersonating
 from adminfoundry.admin.registry import admin_site
 from adminfoundry.database import get_db
 from adminfoundry.dependencies import get_current_user
 from adminfoundry.models.user import User
-from adminfoundry.settings import settings
 
 router = APIRouter()
 
@@ -111,7 +110,7 @@ async def save_permission_matrix(
     await db.execute(_delete(RolePermission).where(RolePermission.role_id == role_id))
 
     injected_tenant_id: uuid.UUID | None = None
-    if settings.MULTI_TENANT:
+    if _get_multi_tenant_flag(request):
         tenant = getattr(request.state, "tenant", None)
         if tenant is not None:
             injected_tenant_id = tenant.id
