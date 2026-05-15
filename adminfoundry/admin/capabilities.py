@@ -56,8 +56,8 @@ def build_admin_context(user, token_payload: dict, request) -> AdminContextRespo
     is_impersonating = bool(token_payload.get("impersonated_by"))
     tenant = getattr(request.state, "tenant", None)
 
-    from adminfoundry.admin.router import _admin_config
-    enabled_features = _admin_config.to_safe_dict() if _admin_config is not None else None
+    runtime = getattr(request.app.state, "adminfoundry", None)
+    enabled_features = runtime.config.to_safe_dict() if runtime is not None else None
 
     return AdminContextResponse(
         contract_version=CONTRACT_VERSION,

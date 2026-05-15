@@ -26,7 +26,8 @@ async def admin_dashboard(
     current_user: User = Depends(get_current_user),
 ):
     """Return rendered dashboard widgets for the current user."""
-    from adminfoundry.admin.dashboard.registry import dashboard_registry
+    runtime = request.app.state.adminfoundry
+    dashboard_registry = runtime.dashboard_registry
 
     payload = getattr(request.state, "token_payload", {})
     t = await _resolve_impersonation_tenant(payload, getattr(request.state, "tenant", None), db)
@@ -34,8 +35,8 @@ async def admin_dashboard(
         request.state.tenant = t
     tenant = getattr(request.state, "tenant", None)
 
-    provider = getattr(request.app.state, "auth_provider", None)
-    is_super = provider.is_superadmin(current_user) if provider else getattr(current_user, "is_superadmin", False)
+    provider = runtime.auth_provider
+    is_super = provider.is_superadmin(current_user)
 
     ctx = DashboardWidgetContext(
         user=current_user,

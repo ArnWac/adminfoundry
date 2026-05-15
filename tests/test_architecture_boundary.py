@@ -13,7 +13,7 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1] / "adminfoundry"
 
-# Modules in core/admin that must not reference concrete extensions directly.
+# Modules in core/admin/routers/middleware that must not reference concrete extensions directly.
 _CORE_MODULES = [
     _ROOT / "admin" / "router.py",
     _ROOT / "admin" / "_helpers.py",
@@ -26,6 +26,11 @@ _CORE_MODULES = [
     _ROOT / "admin" / "dashboard" / "widget.py",
     _ROOT / "admin" / "dashboard" / "builtins.py",
     _ROOT / "admin" / "dashboard" / "registry.py",
+    _ROOT / "core" / "app_factory.py",
+    _ROOT / "core" / "runtime.py",
+    _ROOT / "core" / "installers.py",
+    _ROOT / "core" / "events.py",
+    _ROOT / "routers" / "health.py",
 ]
 
 # Extension sub-packages that core must not import from directly.

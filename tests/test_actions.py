@@ -2,7 +2,7 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from adminfoundry import (
+from adminfoundry.actions import (
     ActivateUsersAction,
     BulkDeleteAction,
     DeactivateUsersAction,

@@ -1,4 +1,8 @@
-"""Smoke tests for the public adminfoundry import surface."""
+"""Smoke tests for the V1 public adminfoundry import surface.
+
+V1 root API is intentionally minimal — actions/dashboards/signals/cache/storage/i18n
+live under explicit submodule paths.
+"""
 
 
 def test_top_level_imports_resolve():
@@ -8,11 +12,6 @@ def test_top_level_imports_resolve():
         ModelAdmin,
         admin_site,
         AuthProvider,
-        BulkDeleteAction,
-        DeactivateUsersAction,
-        ActivateUsersAction,
-        DisableTenantAction,
-        EnableTenantAction,
         __version__,
     )
     assert callable(create_admin)
@@ -27,7 +26,6 @@ def test_actions_subpackage_resolves():
         DisableTenantAction,
         EnableTenantAction,
     )
-    # Each action has the required class attrs
     for cls in (
         BulkDeleteAction,
         DeactivateUsersAction,
@@ -38,3 +36,23 @@ def test_actions_subpackage_resolves():
         a = cls()
         assert isinstance(a.name, str) and a.name
         assert isinstance(a.label, str) and a.label
+
+
+def test_actions_no_longer_in_root_api():
+    """V1: actions are not re-exported from `adminfoundry` root."""
+    import adminfoundry
+    for name in (
+        "BulkDeleteAction",
+        "DeactivateUsersAction",
+        "ActivateUsersAction",
+        "DisableTenantAction",
+        "EnableTenantAction",
+        "DashboardWidget",
+        "signals",
+        "cache",
+        "storage",
+        "t",
+    ):
+        assert name not in adminfoundry.__all__, (
+            f"{name} should not be in root __all__ in V1"
+        )

@@ -4,7 +4,8 @@ Framework models (User, Role, Tenant, AuditLog) are registered automatically
 by create_admin() with sensible defaults.  Only the app-specific Project model
 needs an explicit registration here.
 """
-from adminfoundry import ModelAdmin, admin_site, BulkDeleteAction
+from adminfoundry import ModelAdmin, admin_site
+from adminfoundry.actions import BulkDeleteAction
 
 from examples.basic_multi.models import Project
 

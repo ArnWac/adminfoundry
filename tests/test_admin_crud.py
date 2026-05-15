@@ -276,8 +276,7 @@ async def test_tenant_scoped_filter(client: AsyncClient, superadmin: User, db: A
 
     # Override with MULTI_TENANT=True + tenant in state via middleware patch
     with patch("adminfoundry.settings.settings.MULTI_TENANT", True):
-        with patch("adminfoundry.admin.router.settings.MULTI_TENANT", True):
-            # Inject tenant into request.state manually via a custom middleware
+        # Inject tenant into request.state manually via a custom middleware
             from starlette.middleware.base import BaseHTTPMiddleware
 
             class InjectTenant(BaseHTTPMiddleware):
@@ -403,7 +402,7 @@ def test_superadmin_blocked_from_tenant_scoped_in_root_panel():
     user = MagicMock()
     user.is_superadmin = True
 
-    with patch("adminfoundry.admin.router.settings.MULTI_TENANT", True):
+    with patch("adminfoundry.settings.settings.MULTI_TENANT", True):
         with pytest.raises(HTTPException) as exc_info:
             _check_model_access(model_admin, user, {}, tenant=None)
     assert exc_info.value.status_code == 403
@@ -421,7 +420,7 @@ def test_superadmin_allowed_global_only_in_root_panel():
     user = MagicMock()
     user.is_superadmin = True
 
-    with patch("adminfoundry.admin.router.settings.MULTI_TENANT", True):
+    with patch("adminfoundry.settings.settings.MULTI_TENANT", True):
         # Should not raise
         _check_model_access(model_admin, user, {}, tenant=None)
 

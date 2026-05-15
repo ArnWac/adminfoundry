@@ -93,7 +93,7 @@ async def export_model(
     from datetime import datetime, timezone as _tz_utc
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
     from fastapi.responses import Response
-    from adminfoundry.admin.router import _tenant_filter, _check_model_access
+    from adminfoundry.admin._helpers import _tenant_filter, _check_model_access
 
     model_admin = _get_admin_or_404(model_name)
     token_payload = getattr(request.state, "token_payload", {})

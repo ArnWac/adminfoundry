@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from adminfoundry.database import get_db
@@ -19,8 +19,8 @@ async def health(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/health/dashboard")
-async def health_dashboard(db: AsyncSession = Depends(get_db)):
-    """Aggregated ops view: DB, active sessions, rate-limit summary, recent jobs."""
+async def health_dashboard(request: Request, db: AsyncSession = Depends(get_db)):
+    """Aggregated ops view: DB, active sessions, rate-limit summary, extension health."""
     # DB check
     try:
         await db.execute(text("SELECT 1"))
@@ -35,22 +35,14 @@ async def health_dashboard(db: AsyncSession = Depends(get_db)):
     except Exception:
         active_sessions = None
 
-    # Recent jobs (opt-in extension — may not be loaded)
-    recent_jobs: list | None = None
-    try:
-        from sqlalchemy import select
-        from adminfoundry.extensions.jobs.models import Job
-        rows = (
-            await db.execute(
-                select(Job).order_by(Job.created_at.desc()).limit(5)
-            )
-        ).scalars().all()
-        recent_jobs = [
-            {"id": str(j.id), "action": j.action_name, "status": j.status.value, "created_at": j.created_at.isoformat()}
-            for j in rows
-        ]
-    except Exception:
-        pass
+    # Extension health summary — queried generically via registry, no concrete imports.
+    extension_health: list[dict] | None = None
+    runtime = getattr(request.app.state, "adminfoundry", None)
+    if runtime is not None:
+        try:
+            extension_health = runtime.extension_registry.health_summary()
+        except Exception:
+            extension_health = None
 
     # Rate-limit config summary
     rate_limit_info: dict | None = None
@@ -66,7 +58,7 @@ async def health_dashboard(db: AsyncSession = Depends(get_db)):
         "db": db_status,
         "active_sessions": active_sessions,
         "rate_limit": rate_limit_info,
-        "recent_jobs": recent_jobs,
+        "extensions": extension_health,
     }
 
 
