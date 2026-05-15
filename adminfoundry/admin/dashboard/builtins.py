@@ -1,8 +1,7 @@
 """Core built-in dashboard widgets."""
 from __future__ import annotations
-from typing import Any
 
-from adminfoundry.admin.dashboard.widget import DashboardWidget
+from adminfoundry.admin.dashboard.widget import DashboardWidget, DashboardWidgetContext
 
 
 class ModelCountsWidget(DashboardWidget):
@@ -10,15 +9,13 @@ class ModelCountsWidget(DashboardWidget):
 
     id = "model_counts"
     title = "Records"
+    type = "counts"
 
-    def widget_type(self) -> str:
-        return "counts"
-
-    async def get_data(self, user: Any, db: Any, request: Any) -> dict:
+    async def get_data(self, ctx: DashboardWidgetContext) -> dict:
         from sqlalchemy import select, func as sa_func
         from adminfoundry.admin.registry import admin_site
 
-        tenant = getattr(request.state, "tenant", None)
+        tenant = ctx.tenant
         rows = []
         for ma in admin_site.all():
             if tenant is not None and not ma.tenant_scoped:
@@ -31,7 +28,7 @@ class ModelCountsWidget(DashboardWidget):
                     stmt = stmt.where(ma.model.tenant_id == tenant.id)
                 elif getattr(ma, "global_only_in_root_panel", False):
                     stmt = stmt.where(ma.model.tenant_id.is_(None))
-            count = await db.scalar(stmt) or 0
+            count = await ctx.db.scalar(stmt) or 0
             rows.append({"model": ma.model_name, "label": ma.label_plural, "count": count})
         return {"rows": rows}
 

@@ -370,7 +370,7 @@ def test_cross_tenant_impersonation_rejected():
     import pytest
     from unittest.mock import MagicMock
     from fastapi import HTTPException
-    from adminfoundry.admin.router import _check_model_access
+    from adminfoundry.admin._helpers import _check_model_access
 
     model_admin = MagicMock()
     model_admin.tenant_scoped = True
@@ -394,7 +394,7 @@ def test_superadmin_blocked_from_tenant_scoped_in_root_panel():
     import pytest
     from unittest.mock import MagicMock, patch
     from fastapi import HTTPException
-    from adminfoundry.admin.router import _check_model_access
+    from adminfoundry.admin._helpers import _check_model_access
 
     model_admin = MagicMock()
     model_admin.tenant_scoped = True
@@ -412,7 +412,7 @@ def test_superadmin_blocked_from_tenant_scoped_in_root_panel():
 def test_superadmin_allowed_global_only_in_root_panel():
     """Superadmin can access tenant_scoped models with global_only_in_root_panel=True from root panel."""
     from unittest.mock import MagicMock, patch
-    from adminfoundry.admin.router import _check_model_access
+    from adminfoundry.admin._helpers import _check_model_access
 
     model_admin = MagicMock()
     model_admin.tenant_scoped = True
@@ -430,7 +430,7 @@ def test_tenant_admin_access_in_correct_tenant():
     """User with tenant_admin role for tenant A can access tenant-scoped models in tenant A."""
     import uuid
     from unittest.mock import MagicMock
-    from adminfoundry.admin.router import _check_model_access
+    from adminfoundry.admin._helpers import _check_model_access
 
     tenant_id = uuid.uuid4()
     tenant = MagicMock()
@@ -457,7 +457,7 @@ def test_tenant_admin_blocked_from_wrong_tenant():
     import pytest
     from unittest.mock import MagicMock
     from fastapi import HTTPException
-    from adminfoundry.admin.router import _check_model_access
+    from adminfoundry.admin._helpers import _check_model_access
 
     tenant_a_id = uuid.uuid4()
 

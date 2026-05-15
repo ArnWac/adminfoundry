@@ -4,25 +4,24 @@ Core dashboard provides infrastructure + generic widgets only.
 Concrete metric widgets are contributed by ObservabilityExtension via
 ExtensionBase.get_dashboard_widgets(). Disabled extensions contribute nothing.
 
-The "live app" tests run in a fresh subprocess because create_admin mutates
-module-level state (_admin_config, _extension_widgets) shared with the
-multi-tenant example app loaded by conftest.
+Live-app tests run in a fresh subprocess to avoid mutating the module-level
+extension_registry and dashboard_registry singletons.
 """
 from __future__ import annotations
 
 import subprocess
 import sys
 import textwrap
-from pathlib import Path
 
-from adminfoundry.dashboard import (
+from adminfoundry.admin.dashboard import (
     DEFAULT_WIDGETS,
     DashboardWidget,
+    DashboardWidgetContext,
+    DashboardWidgetType,
+    DashboardResponse,
+    DashboardWidgetResponse,
     ModelCountsWidget,
 )
-
-
-_DASHBOARD_SRC = Path(__file__).resolve().parents[1] / "adminfoundry" / "dashboard.py"
 
 
 def _run(script: str) -> None:
@@ -33,17 +32,48 @@ def _run(script: str) -> None:
 # Static / in-process checks
 # ---------------------------------------------------------------------------
 
-def test_core_dashboard_imports_no_extension_observability():
-    """Core dashboard module must not reference adminfoundry.extensions.observability."""
-    src = _DASHBOARD_SRC.read_text(encoding="utf-8")
-    assert "extensions.observability" not in src
-    assert "extensions/observability" not in src
-
-
 def test_default_widgets_contains_only_core_widgets():
     """DEFAULT_WIDGETS is the core generic widget list — ModelCountsWidget only."""
     assert len(DEFAULT_WIDGETS) == 1
     assert isinstance(DEFAULT_WIDGETS[0], ModelCountsWidget)
+
+
+def test_dashboard_widget_context_is_dataclass():
+    """DashboardWidgetContext must be a frozen dataclass with the V1 fields."""
+    import dataclasses
+    assert dataclasses.is_dataclass(DashboardWidgetContext)
+    fields = {f.name for f in dataclasses.fields(DashboardWidgetContext)}
+    assert fields >= {"user", "db", "request", "tenant", "tenant_id", "is_superadmin", "capabilities"}
+
+
+def test_dashboard_widget_type_is_a_class_attribute():
+    """DashboardWidget.type must be a class attribute, not a method."""
+    w = ModelCountsWidget()
+    assert isinstance(w.type, str)
+    assert w.type == "counts"
+    assert not callable(w.type)
+
+
+def test_dashboard_widget_get_data_takes_context():
+    """DashboardWidget.get_data must accept a DashboardWidgetContext, not loose args."""
+    import inspect
+    sig = inspect.signature(DashboardWidget.get_data)
+    params = list(sig.parameters.keys())
+    assert params == ["self", "ctx"], f"Unexpected signature params: {params}"
+
+
+def test_dashboard_widget_has_is_visible():
+    """DashboardWidget.is_visible must be an async method."""
+    import inspect
+    assert inspect.iscoroutinefunction(DashboardWidget.is_visible)
+
+
+def test_dashboard_response_models_exist():
+    """DashboardResponse and DashboardWidgetResponse must be importable Pydantic models."""
+    from pydantic import BaseModel
+    assert issubclass(DashboardResponse, BaseModel)
+    assert issubclass(DashboardWidgetResponse, BaseModel)
+    assert "error" in DashboardWidgetResponse.model_fields
 
 
 def test_observability_extension_contributes_admin_metrics_widget():
@@ -85,22 +115,22 @@ def test_old_middleware_tenant_shim_is_removed():
 
 
 # ---------------------------------------------------------------------------
-# Subprocess-isolated live-app checks (avoid mutating shared module state)
+# Subprocess-isolated live-app checks
 # ---------------------------------------------------------------------------
 
 def test_observability_widgets_absent_when_extension_disabled():
-    """With extensions=[], no widget with id=='admin_metrics' is registered."""
+    """With extensions=[], no widget with id=='admin_metrics' is in the registry."""
     _run("""
         from adminfoundry import create_admin, CoreAdminConfig
         create_admin(config=CoreAdminConfig(extensions=[]), title="boundary-test")
-        from adminfoundry.admin import router as r
-        ids = [getattr(w, 'id', None) for w in r._extension_widgets]
+        from adminfoundry.admin.dashboard.registry import dashboard_registry
+        ids = [w.id for w in dashboard_registry.all()]
         assert 'admin_metrics' not in ids, f"unexpected widget ids: {ids}"
     """)
 
 
 def test_observability_widgets_present_when_extension_enabled():
-    """With ObservabilityExtension() registered, admin_metrics widget is appended."""
+    """With ObservabilityExtension() registered, admin_metrics widget is in the registry."""
     _run("""
         from adminfoundry import create_admin, CoreAdminConfig
         from adminfoundry.extensions.observability import ObservabilityExtension
@@ -108,17 +138,17 @@ def test_observability_widgets_present_when_extension_enabled():
             config=CoreAdminConfig(extensions=[ObservabilityExtension()]),
             title="boundary-test",
         )
-        from adminfoundry.admin import router as r
-        ids = [getattr(w, 'id', None) for w in r._extension_widgets]
+        from adminfoundry.admin.dashboard.registry import dashboard_registry
+        ids = [w.id for w in dashboard_registry.all()]
         assert 'admin_metrics' in ids, f"missing admin_metrics in: {ids}"
     """)
 
 
-def test_user_dashboard_widgets_replace_defaults():
-    """User widgets in CoreAdminConfig.dashboard_widgets replace DEFAULT_WIDGETS."""
+def test_user_dashboard_widgets_appended_to_defaults():
+    """User widgets in CoreAdminConfig.dashboard_widgets are appended to DEFAULT_WIDGETS."""
     _run("""
         from adminfoundry import create_admin, CoreAdminConfig
-        from adminfoundry.dashboard import DashboardWidget
+        from adminfoundry.admin.dashboard import DashboardWidget
 
         class _MyWidget(DashboardWidget):
             id = "my_widget"
@@ -129,8 +159,35 @@ def test_user_dashboard_widgets_replace_defaults():
             config=CoreAdminConfig(dashboard_widgets=[widget], extensions=[]),
             title="boundary-test",
         )
-        from adminfoundry.admin import router as r
-        assert r._admin_config.dashboard_widgets == [widget]
-        # Extension widgets are appended; here extensions=[] so nothing is added.
-        assert r._extension_widgets == []
+        from adminfoundry.admin.dashboard.registry import dashboard_registry
+        ids = [w.id for w in dashboard_registry.all()]
+        assert 'model_counts' in ids, f"core widget missing: {ids}"
+        assert 'my_widget' in ids, f"custom widget missing: {ids}"
+        assert ids.index('model_counts') < ids.index('my_widget'), "core widget must come first"
+    """)
+
+
+def test_user_dashboard_widgets_replace_when_mode_replace():
+    """dashboard_widgets_mode='replace' fully replaces DEFAULT_WIDGETS."""
+    _run("""
+        from adminfoundry import create_admin, CoreAdminConfig
+        from adminfoundry.admin.dashboard import DashboardWidget
+
+        class _MyWidget(DashboardWidget):
+            id = "my_widget"
+            title = "Custom"
+
+        widget = _MyWidget()
+        create_admin(
+            config=CoreAdminConfig(
+                dashboard_widgets=[widget],
+                dashboard_widgets_mode="replace",
+                extensions=[],
+            ),
+            title="boundary-test",
+        )
+        from adminfoundry.admin.dashboard.registry import dashboard_registry
+        ids = [w.id for w in dashboard_registry.all()]
+        assert 'model_counts' not in ids, f"core widget should be replaced: {ids}"
+        assert 'my_widget' in ids, f"custom widget missing: {ids}"
     """)

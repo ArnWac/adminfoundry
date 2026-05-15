@@ -72,13 +72,13 @@ class CoreAdminConfig:
     storage_backend: Any | None = None
 
     # Dashboard widgets — None uses DEFAULT_WIDGETS (core generic widgets only).
-    # Provide a list to REPLACE the defaults. Widgets contributed by enabled
-    # extensions (via ExtensionBase.get_dashboard_widgets()) are APPENDED after
-    # the selected base widgets. Use:
-    #   from adminfoundry.dashboard import DEFAULT_WIDGETS
-    #   dashboard_widgets=[*DEFAULT_WIDGETS, MyCustomWidget()]
-    # to extend rather than replace.
+    # By default (mode "append"), user-supplied widgets are added after the core
+    # defaults. Set dashboard_widgets_mode="replace" to fully replace DEFAULT_WIDGETS.
+    # Widgets contributed by extensions are always appended after the base set.
     dashboard_widgets: list[Any] | None = None
+    # "append" (default): user widgets added after DEFAULT_WIDGETS.
+    # "replace": user widgets fully replace DEFAULT_WIDGETS.
+    dashboard_widgets_mode: str = "append"
 
     # Extra i18n strings injected into the admin UI — merged on top of built-in strings.
     # Lets app code add/override translations without modifying the package.

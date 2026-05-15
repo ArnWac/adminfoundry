@@ -1,18 +1,24 @@
 """Admin dashboard and compatibility endpoints."""
+import logging
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from adminfoundry.admin.contract import CONTRACT_VERSION
+from adminfoundry.admin.dashboard.responses import DashboardResponse, DashboardWidgetResponse
+from adminfoundry.admin.dashboard.widget import DashboardWidgetContext
 from adminfoundry.admin.ui_renderer import get_support_matrix
 from adminfoundry.database import get_admin_db
 from adminfoundry.dependencies import get_current_user
 from adminfoundry.models.user import User
 from adminfoundry.tenancy.resolver import resolve_impersonation_tenant as _resolve_impersonation_tenant
 
+_log = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
-@router.get("/dashboard")
+@router.get("/dashboard", response_model=DashboardResponse)
 async def admin_dashboard(
     request: Request,
     db: AsyncSession = Depends(get_admin_db),
@@ -25,18 +31,39 @@ async def admin_dashboard(
     t = await _resolve_impersonation_tenant(payload, getattr(request.state, "tenant", None), db)
     if t is not None:
         request.state.tenant = t
+    tenant = getattr(request.state, "tenant", None)
 
     provider = getattr(request.app.state, "auth_provider", None)
     is_super = provider.is_superadmin(current_user) if provider else getattr(current_user, "is_superadmin", False)
 
-    result = []
-    for w in dashboard_registry.for_user(is_super):
+    ctx = DashboardWidgetContext(
+        user=current_user,
+        db=db,
+        request=request,
+        tenant=tenant,
+        tenant_id=str(tenant.id) if tenant is not None else None,
+        is_superadmin=is_super,
+    )
+
+    widgets: list[DashboardWidgetResponse] = []
+    for w in dashboard_registry.all():
+        if not await w.is_visible(ctx):
+            continue
+        error: str | None = None
+        data: dict = {}
         try:
-            data = await w.get_data(current_user, db, request)
+            data = await w.get_data(ctx)
         except Exception:
-            data = {}
-        result.append({"id": w.id, "title": w.title, "type": w.widget_type(), "data": data})
-    return {"widgets": result}
+            _log.exception("Dashboard widget %r failed", w.id)
+            error = "widget_failed"
+        widgets.append(DashboardWidgetResponse(
+            id=w.id,
+            title=w.title,
+            type=w.type,
+            data=data,
+            error=error,
+        ))
+    return DashboardResponse(widgets=widgets)
 
 
 @router.get("/compatibility")

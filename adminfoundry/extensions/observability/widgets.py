@@ -4,9 +4,7 @@ Reads from the observability counter store at
 `adminfoundry.extensions.observability.admin_metrics`. Never exposes secrets,
 token internals, or protected field content.
 """
-from typing import Any
-
-from adminfoundry.admin.dashboard.widget import DashboardWidget
+from adminfoundry.admin.dashboard.widget import DashboardWidget, DashboardWidgetContext
 
 
 class AdminMetricsWidget(DashboardWidget):
@@ -16,7 +14,7 @@ class AdminMetricsWidget(DashboardWidget):
     title = "Operations"
     superadmin_only = True
 
-    async def get_data(self, user: Any, db: Any, request: Any) -> dict:
+    async def get_data(self, ctx: DashboardWidgetContext) -> dict:
         from adminfoundry.extensions.observability.admin_metrics import get_snapshot
         m = get_snapshot()
         error_rate = (

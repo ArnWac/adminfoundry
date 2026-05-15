@@ -63,33 +63,11 @@ router.include_router(preferences.router)
 router.include_router(permissions.router)
 router.include_router(crud.router)
 
-# ---------------------------------------------------------------------------
-# Backward-compat re-exports — external modules import helpers from this path.
-# adminfoundry.extensions.jobs.router and tests use _check_model_access / _tenant_filter.
-# ---------------------------------------------------------------------------
-from adminfoundry.admin._helpers import (  # noqa: E402
-    _check_model_access,
-    _enforce_method_caps,
-    _get_admin_or_404,
-    _model_supports_soft_delete,
-    _require_superadmin_or_impersonating,
-    _tenant_filter,
-    _validate_body,
-)
-
 __all__ = [
     "router",
     "create_admin",
     "settings",
     "_admin_config",
-    "_extension_widgets",
-    "_check_model_access",
-    "_enforce_method_caps",
-    "_get_admin_or_404",
-    "_model_supports_soft_delete",
-    "_require_superadmin_or_impersonating",
-    "_tenant_filter",
-    "_validate_body",
 ]
 
 # ---------------------------------------------------------------------------
@@ -97,7 +75,6 @@ __all__ = [
 # External code accesses these via `import adminfoundry.admin.router as r; r._admin_config`.
 # ---------------------------------------------------------------------------
 _admin_config = None
-_extension_widgets: list = []
 
 
 # ---------------------------------------------------------------------------
@@ -271,20 +248,28 @@ def _install_admin_crud(app, config) -> None:
 
 
 def _install_extensions(app, config) -> None:
-    global _extension_widgets
     from adminfoundry.admin.dashboard.registry import dashboard_registry
     from adminfoundry.admin.dashboard.builtins import DEFAULT_WIDGETS
-    base = config.dashboard_widgets if config.dashboard_widgets is not None else DEFAULT_WIDGETS
+    from adminfoundry.extensions import extension_registry
+
+    # Reset singletons so create_admin() can be called multiple times (e.g., in tests)
+    extension_registry._extensions.clear()
+
+    base = list(DEFAULT_WIDGETS)
+    if config.dashboard_widgets is not None:
+        if getattr(config, "dashboard_widgets_mode", "append") == "replace":
+            base = list(config.dashboard_widgets)
+        else:
+            base = base + list(config.dashboard_widgets)
     dashboard_registry.reset(base=base)
-    _extension_widgets = []
+
     for ext in config.extensions:
+        extension_registry.register(ext)
         ext.get_models()  # import side-effect registers extension tables with Base.metadata
         for ext_router in ext.get_routers():
             app.include_router(ext_router)
-        widgets = ext.get_dashboard_widgets() if hasattr(ext, "get_dashboard_widgets") else []
-        for w in widgets:
+        for w in ext.get_dashboard_widgets():
             dashboard_registry.register(w)
-        _extension_widgets.extend(widgets)
 
 
 def _install_admin_ui(app, config) -> None:

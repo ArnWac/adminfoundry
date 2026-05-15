@@ -9,7 +9,7 @@ from adminfoundry import signals
 from adminfoundry.cache import cache
 from adminfoundry.storage import storage
 from adminfoundry.i18n import t
-from adminfoundry.dashboard import DashboardWidget
+from adminfoundry.admin.dashboard.widget import DashboardWidget
 from adminfoundry.actions import (
     BulkDeleteAction,
     DeactivateUsersAction,
