@@ -70,13 +70,10 @@ def install_state(app: "FastAPI", runtime: "AdminRuntime") -> None:
         validate_user_model(config.user_model)
         runtime.auth_provider.user_model = config.user_model
 
-    from adminfoundry import cache as _cache_mod, storage as _storage_mod, i18n as _i18n_mod
-    if config.cache_backend:
-        _cache_mod.configure(config.cache_backend)
-    if config.storage_backend:
-        _storage_mod.configure(config.storage_backend)
-    if config.default_language:
-        _i18n_mod.set_default_language(config.default_language)
+    from adminfoundry.cache import make_cache
+    from adminfoundry.storage import LocalStorage
+    runtime.cache = make_cache(config.cache_backend)
+    runtime.storage = config.storage_backend if config.storage_backend is not None else LocalStorage()
 
 
 def install_exception_handlers(app: "FastAPI", runtime: "AdminRuntime") -> None:
@@ -126,17 +123,9 @@ def install_admin_api(app: "FastAPI", runtime: "AdminRuntime") -> None:
 
 
 def install_extensions(app: "FastAPI", runtime: "AdminRuntime") -> None:
-    """Register extensions on the per-app runtime.
-
-    Module-level `extension_registry` and `dashboard_registry` singletons are also
-    refreshed for CLI/inspection use (e.g. `adminfoundry extensions list`). In a
-    multi-app process they reflect the most recent app — request handlers must
-    always read from `request.app.state.adminfoundry.{name}_registry` instead.
-    """
+    """Register extensions on the per-app runtime."""
     from adminfoundry.admin.dashboard.builtins import DEFAULT_WIDGETS
-    from adminfoundry.admin.dashboard.registry import dashboard_registry as _legacy_dashboard
     from adminfoundry.admin.registry import admin_site as _admin_site
-    from adminfoundry.extensions import extension_registry as _legacy_ext
     config = runtime.config
 
     if config.dashboard_widgets is not None and config.dashboard_widgets_mode == "replace":
@@ -146,12 +135,9 @@ def install_extensions(app: "FastAPI", runtime: "AdminRuntime") -> None:
     else:
         base = list(DEFAULT_WIDGETS)
     runtime.dashboard_registry.reset(base=base)
-    _legacy_dashboard.reset(base=base)
 
-    _legacy_ext._extensions.clear()
     for ext in config.extensions:
         runtime.extension_registry.register(ext)
-        _legacy_ext.register(ext)
         ext.get_models()  # import side-effect registers extension tables with Base.metadata
         for ma in ext.get_admin_registrations():
             _admin_site.register(ma)
@@ -159,7 +145,6 @@ def install_extensions(app: "FastAPI", runtime: "AdminRuntime") -> None:
             app.include_router(ext_router)
         for w in ext.get_dashboard_widgets():
             runtime.dashboard_registry.register(w)
-            _legacy_dashboard.register(w)
         ext.on_startup(app, runtime)
 
 

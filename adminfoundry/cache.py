@@ -2,12 +2,11 @@
 
 Default backend: in-process memory (no persistence, no cross-process sharing).
 Redis backend: install redis and pass ``cache_backend="redis://..."`` to
-``CoreAdminConfig`` or call ``configure("redis://...")``.
+``CoreAdminConfig``.
 
 Usage::
 
-    from adminfoundry.cache import cache
-
+    cache = request.app.state.adminfoundry.cache
     await cache.set("my_key", {"data": 1}, ttl=60)
     val = await cache.get("my_key")   # {"data": 1}
     await cache.delete("my_key")
@@ -70,24 +69,13 @@ class RedisBackend:
         await self._client.flushdb()
 
 
-# Module-level singleton — replaced by configure()
-cache: InMemoryBackend = InMemoryBackend()
-
-
-def configure(backend_url: str | None) -> None:
-    """Configure the active cache backend.
-
-    ``backend_url`` examples:
-      - ``None`` or ``"memory"`` → InMemoryBackend (default)
-      - ``"redis://localhost:6379/0"`` → RedisBackend
-    """
-    global cache
+def make_cache(backend_url: str | None):
+    """Return the appropriate cache backend for *backend_url*."""
     if not backend_url or backend_url == "memory":
-        cache = InMemoryBackend()
-    elif backend_url.startswith("redis"):
-        cache = RedisBackend(backend_url)
-    else:
-        raise ValueError(f"Unsupported cache backend URL: {backend_url!r}")
+        return InMemoryBackend()
+    if backend_url.startswith("redis"):
+        return RedisBackend(backend_url)
+    raise ValueError(f"Unsupported cache backend URL: {backend_url!r}")
 
 
 # ---------------------------------------------------------------------------

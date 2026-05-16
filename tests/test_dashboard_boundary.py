@@ -122,9 +122,8 @@ def test_observability_widgets_absent_when_extension_disabled():
     """With extensions=[], no widget with id=='admin_metrics' is in the registry."""
     _run("""
         from adminfoundry import create_admin, CoreAdminConfig
-        create_admin(config=CoreAdminConfig(extensions=[]), title="boundary-test")
-        from adminfoundry.admin.dashboard.registry import dashboard_registry
-        ids = [w.id for w in dashboard_registry.all()]
+        app = create_admin(config=CoreAdminConfig(extensions=[]), title="boundary-test")
+        ids = [w.id for w in app.state.adminfoundry.dashboard_registry.all()]
         assert 'admin_metrics' not in ids, f"unexpected widget ids: {ids}"
     """)
 
@@ -134,12 +133,11 @@ def test_observability_widgets_present_when_extension_enabled():
     _run("""
         from adminfoundry import create_admin, CoreAdminConfig
         from adminfoundry.extensions.observability import ObservabilityExtension
-        create_admin(
+        app = create_admin(
             config=CoreAdminConfig(extensions=[ObservabilityExtension()]),
             title="boundary-test",
         )
-        from adminfoundry.admin.dashboard.registry import dashboard_registry
-        ids = [w.id for w in dashboard_registry.all()]
+        ids = [w.id for w in app.state.adminfoundry.dashboard_registry.all()]
         assert 'admin_metrics' in ids, f"missing admin_metrics in: {ids}"
     """)
 
@@ -155,12 +153,11 @@ def test_user_dashboard_widgets_appended_to_defaults():
             title = "Custom"
 
         widget = _MyWidget()
-        create_admin(
+        app = create_admin(
             config=CoreAdminConfig(dashboard_widgets=[widget], extensions=[]),
             title="boundary-test",
         )
-        from adminfoundry.admin.dashboard.registry import dashboard_registry
-        ids = [w.id for w in dashboard_registry.all()]
+        ids = [w.id for w in app.state.adminfoundry.dashboard_registry.all()]
         assert 'model_counts' in ids, f"core widget missing: {ids}"
         assert 'my_widget' in ids, f"custom widget missing: {ids}"
         assert ids.index('model_counts') < ids.index('my_widget'), "core widget must come first"
@@ -178,7 +175,7 @@ def test_user_dashboard_widgets_replace_when_mode_replace():
             title = "Custom"
 
         widget = _MyWidget()
-        create_admin(
+        app = create_admin(
             config=CoreAdminConfig(
                 dashboard_widgets=[widget],
                 dashboard_widgets_mode="replace",
@@ -186,8 +183,7 @@ def test_user_dashboard_widgets_replace_when_mode_replace():
             ),
             title="boundary-test",
         )
-        from adminfoundry.admin.dashboard.registry import dashboard_registry
-        ids = [w.id for w in dashboard_registry.all()]
+        ids = [w.id for w in app.state.adminfoundry.dashboard_registry.all()]
         assert 'model_counts' not in ids, f"core widget should be replaced: {ids}"
         assert 'my_widget' in ids, f"custom widget missing: {ids}"
     """)

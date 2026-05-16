@@ -20,4 +20,3 @@ class DashboardRegistry:
         return list(self._widgets)
 
 
-dashboard_registry = DashboardRegistry()

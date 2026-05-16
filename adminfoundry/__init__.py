@@ -1,13 +1,14 @@
 """adminfoundry — FastAPI admin framework with built-in UI, auth, and multi-tenancy.
 
 V1 public API is intentionally minimal. Use explicit submodule imports for
-dashboards, actions, signals, cache, storage, and i18n:
+dashboards, actions, signals, and i18n:
 
     from adminfoundry.admin.dashboard import DashboardWidget
     from adminfoundry.actions import BulkDeleteAction
-    from adminfoundry.cache import cache
-    from adminfoundry.storage import storage
     from adminfoundry.i18n import t
+
+Cache and storage are per-app: access via ``request.app.state.adminfoundry.cache``
+and ``request.app.state.adminfoundry.storage``.
 """
 
 from adminfoundry.admin.model_admin import ModelAdmin

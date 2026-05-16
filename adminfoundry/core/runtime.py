@@ -28,6 +28,8 @@ class AdminRuntime:
     extension_registry: "ExtensionRegistry"
     dashboard_registry: "DashboardRegistry"
     event_bus: "EventBus"
+    cache: Any = None
+    storage: Any = None
 
 
 def get_runtime(app: "FastAPI") -> AdminRuntime:

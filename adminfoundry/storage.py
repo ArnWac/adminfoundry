@@ -7,10 +7,7 @@ S3-compatible storage requires ``pip install boto3``.
 
 Usage::
 
-    from adminfoundry.storage import storage, configure
-
-    configure(LocalStorage(base_dir="uploads", base_url="/uploads"))
-
+    storage = request.app.state.adminfoundry.storage
     saved_path = await storage.save("avatars/user123.png", file_obj)
     url = storage.url(saved_path)   # "/uploads/avatars/user123.png"
     await storage.delete(saved_path)
@@ -59,16 +56,6 @@ def _make_unique_path(filename: str, prefix: str = "") -> str:
     name = uuid.uuid4().hex
     parts = [prefix, name + suffix] if prefix else [name + suffix]
     return "/".join(parts)
-
-
-# Module-level singleton — replaced by configure()
-storage: LocalStorage = LocalStorage()
-
-
-def configure(backend: Any) -> None:
-    """Replace the active storage backend."""
-    global storage
-    storage = backend
 
 
 def generate_path(filename: str, prefix: str = "") -> str:

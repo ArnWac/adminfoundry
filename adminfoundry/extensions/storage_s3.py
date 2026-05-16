@@ -1,11 +1,13 @@
 """S3-compatible storage backend — requires ``pip install boto3``.
 
-Wire it up explicitly::
+Wire it up via CoreAdminConfig::
 
-    from adminfoundry.storage import configure
+    from adminfoundry import create_admin, CoreAdminConfig
     from adminfoundry.extensions.storage_s3 import S3Storage
 
-    configure(S3Storage(bucket="my-bucket", region="us-east-1"))
+    app = create_admin(config=CoreAdminConfig(
+        storage_backend=S3Storage(bucket="my-bucket", region="us-east-1"),
+    ))
 """
 from __future__ import annotations
 

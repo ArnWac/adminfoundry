@@ -295,7 +295,6 @@ def doctor():
 
 async def _doctor():
     from adminfoundry.core.config import CoreAdminConfig
-    from adminfoundry.extensions import extension_registry
 
     config = CoreAdminConfig.from_settings(settings)
     ok = True
@@ -327,7 +326,7 @@ async def _doctor():
 
     # 4. Extension health
     typer.echo("\n[Extensions] Registered extensions:")
-    extensions = extension_registry.all()
+    extensions = config.extensions
     if extensions:
         for ext in extensions:
             h = ext.health_check()
@@ -449,8 +448,8 @@ def db_upgrade(
 @extensions_app.command("list")
 def extensions_list():
     """List all registered extensions."""
-    from adminfoundry.extensions import extension_registry
-    exts = extension_registry.all()
+    from adminfoundry.core.config import CoreAdminConfig
+    exts = CoreAdminConfig.from_settings(settings).extensions
     if not exts:
         typer.echo("No extensions registered.")
         return
@@ -463,8 +462,8 @@ def extensions_list():
 @extensions_app.command("check")
 def extensions_check():
     """Run startup checks for all registered extensions."""
-    from adminfoundry.extensions import extension_registry
-    exts = extension_registry.all()
+    from adminfoundry.core.config import CoreAdminConfig
+    exts = CoreAdminConfig.from_settings(settings).extensions
     if not exts:
         typer.echo("No extensions registered.")
         return

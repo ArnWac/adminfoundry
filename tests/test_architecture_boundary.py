@@ -82,10 +82,10 @@ def test_extension_base_is_importable_from_core():
     assert hasattr(ExtensionBase, "get_dashboard_widgets")
 
 
-def test_dashboard_registry_singleton_accessible():
-    """dashboard_registry singleton must be accessible from the canonical path."""
-    from adminfoundry.admin.dashboard.registry import dashboard_registry, DashboardRegistry
-    assert isinstance(dashboard_registry, DashboardRegistry)
+def test_dashboard_registry_class_accessible():
+    """DashboardRegistry class must be importable from the canonical path."""
+    from adminfoundry.admin.dashboard.registry import DashboardRegistry
+    assert callable(DashboardRegistry)
 
 
 def test_duplicate_extension_names_rejected():
@@ -112,18 +112,16 @@ def test_core_works_with_no_extensions():
 
 
 def test_extension_registry_populated_after_create_admin():
-    """extension_registry singleton must reflect enabled extensions after create_admin()."""
+    """Per-app extension_registry must reflect enabled extensions after create_admin()."""
     _run("""
         from adminfoundry import create_admin, CoreAdminConfig
         from adminfoundry.extensions.observability import ObservabilityExtension
-        create_admin(
+        app = create_admin(
             config=CoreAdminConfig(extensions=[ObservabilityExtension()]),
             title="registry-test",
         )
-        from adminfoundry.extensions import extension_registry
-        assert "observability" in extension_registry.names(), (
-            f"expected 'observability' in {extension_registry.names()}"
-        )
+        names = app.state.adminfoundry.extension_registry.names()
+        assert "observability" in names, f"expected 'observability' in {names}"
     """)
 
 

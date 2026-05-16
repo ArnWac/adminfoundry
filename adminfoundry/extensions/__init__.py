@@ -152,7 +152,4 @@ class ExtensionRegistry:
         ]
 
 
-# Module-level singleton — populated by main.py during app startup
-extension_registry = ExtensionRegistry()
-
-__all__ = ["ExtensionBase", "ExtensionRegistry", "extension_registry"]
+__all__ = ["ExtensionBase", "ExtensionRegistry"]

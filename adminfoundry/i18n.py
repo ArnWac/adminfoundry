@@ -6,10 +6,10 @@ messages, and CLI output.
 
 Usage::
 
-    from adminfoundry.i18n import t, set_default_language, add_catalog
+    from adminfoundry.i18n import t, add_catalog
 
-    set_default_language("de")
-    print(t("email_password_reset_subject"))
+    # Always pass lang explicitly (falls back to "en"):
+    print(t("email_password_reset_subject", lang="de"))
     # → "Passwort zurücksetzen"
 
     # Interpolation:
@@ -108,22 +108,9 @@ _CATALOGS: dict[str, dict[str, str]] = {
     },
 }
 
-_default_language: str = "en"
-
-
-def set_default_language(lang: str) -> None:
-    """Set the fallback language used when no lang is passed to t()."""
-    global _default_language
-    _default_language = lang
-
-
-def get_default_language() -> str:
-    return _default_language
-
-
 def t(key: str, lang: str | None = None, **vars: str) -> str:
-    """Translate *key* to *lang* (falls back to default, then English, then the key itself)."""
-    resolved = lang or _default_language
+    """Translate *key* to *lang* (falls back to English, then the key itself)."""
+    resolved = lang or "en"
     catalog = _CATALOGS.get(resolved) or _CATALOGS.get("en") or {}
     text = catalog.get(key) or (_CATALOGS.get("en") or {}).get(key, key)
     if vars:

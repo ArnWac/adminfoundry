@@ -381,7 +381,8 @@ async def upload_file(
 ):
     """Upload a file to the configured storage backend. Returns {path, url}."""
     from fastapi import UploadFile
-    from adminfoundry.storage import storage, generate_path
+    from adminfoundry.storage import generate_path
+    storage = request.app.state.adminfoundry.storage
 
     content_type = request.headers.get("content-type", "")
     if "multipart/form-data" not in content_type:
