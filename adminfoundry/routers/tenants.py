@@ -3,9 +3,8 @@ import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, text
+from sqlalchemy import select
 from adminfoundry.database import get_db
-from adminfoundry.tenancy.schema_strategy import get_or_create_tenant_engine
 from adminfoundry.pagination import paginate
 from adminfoundry.dependencies import require_superadmin
 from adminfoundry.models.tenant import Tenant
@@ -112,13 +111,15 @@ async def migrate_tenant(
 
     schema_name = tenant.schema_name
 
+    from adminfoundry.tenancy.bootstrap import bootstrap_tenant
+
     try:
-        # PostgreSQL: create the tenant schema; no-op for SQLite (DDL not supported)
-        await db.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema_name}"'))
-        await db.commit()
-        get_or_create_tenant_engine(schema_name)
-    except Exception:
-        await db.rollback()  # SQLite or other non-schema-supporting dialect
+        await bootstrap_tenant(tenant.slug, public_db=db)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Tenant bootstrap failed: {exc}",
+        )
 
     return {"status": "ok", "schema": schema_name}
 

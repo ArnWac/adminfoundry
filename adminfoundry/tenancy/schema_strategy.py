@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from collections.abc import AsyncGenerator
 
-from sqlalchemy import event
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine, async_sessionmaker
 
 from adminfoundry.settings import settings
@@ -27,16 +27,7 @@ def _validate_schema_name(schema_name: str) -> None:
 
 def _make_tenant_engine(schema_name: str) -> AsyncEngine:
     _validate_schema_name(schema_name)
-    eng = create_async_engine(settings.DATABASE_URL, echo=settings.DEBUG)
-
-    @event.listens_for(eng.sync_engine, "connect")
-    def set_search_path(dbapi_conn, _record):
-        cursor = dbapi_conn.cursor()
-        # schema_name is validated against _SAFE_SCHEMA_RE; quoted to handle hyphens safely.
-        cursor.execute(f'SET search_path TO "{schema_name}", public')
-        cursor.close()
-
-    return eng
+    return create_async_engine(settings.DATABASE_URL, echo=settings.DEBUG)
 
 
 def get_or_create_tenant_engine(schema_name: str) -> AsyncEngine:
@@ -52,11 +43,21 @@ def get_or_create_tenant_engine(schema_name: str) -> AsyncEngine:
 
 
 async def get_tenant_session(schema_name: str) -> AsyncGenerator[AsyncSession, None]:
-    """Yield an AsyncSession scoped to the given tenant schema."""
+    """Yield an AsyncSession scoped to the given tenant schema.
+
+    SET LOCAL confines the search_path change to the current transaction so it
+    cannot leak to the next request that reuses the pooled connection.
+    """
+    _validate_schema_name(schema_name)
     tenant_engine = get_or_create_tenant_engine(schema_name)
     factory = async_sessionmaker(tenant_engine, expire_on_commit=False)
     async with factory() as session:
         try:
+            if "postgresql" in settings.DATABASE_URL:
+                # schema_name is validated above; quoted to handle hyphens safely.
+                await session.execute(
+                    text(f'SET LOCAL search_path TO "{schema_name}", public')
+                )
             yield session
         except Exception:
             await session.rollback()

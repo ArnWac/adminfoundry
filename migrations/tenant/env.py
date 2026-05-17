@@ -14,7 +14,8 @@ from sqlalchemy import pool, text
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from adminfoundry.settings import settings
-from adminfoundry.models.base import Base
+from adminfoundry.models.base import TenantBase
+import adminfoundry.tenancy.tenant_models  # noqa: F401 — register TenantBase tables
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
@@ -22,7 +23,7 @@ config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = Base.metadata
+target_metadata = TenantBase.metadata
 
 # Optional schema override passed via -x schema=tenant_acme
 _schema = context.get_x_argument(as_dictionary=True).get("schema")

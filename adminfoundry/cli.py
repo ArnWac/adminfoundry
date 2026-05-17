@@ -516,11 +516,11 @@ async def _migrate_tenant_schema(slug: str):
         typer.echo(f"[skip] non-PostgreSQL database — schema creation not applicable for {slug}")
         return
 
-    schema_name = f"tenant_{slug}"
-    async with engine.begin() as conn:
-        await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema_name}"'))
-    get_or_create_tenant_engine(schema_name)
-    typer.echo(f"Schema {schema_name} ready.")
+    from adminfoundry.tenancy.bootstrap import bootstrap_tenant
+
+    async with AsyncSessionLocal() as session:
+        await bootstrap_tenant(slug, public_db=session)
+    typer.echo(f"Schema tenant_{slug} ready.")
 
 
 async def _migrate_all_tenants():

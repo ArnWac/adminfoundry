@@ -30,6 +30,7 @@ from adminfoundry.models.revoked_token import RevokedToken  # noqa: F401 — reg
 from adminfoundry.models.password_reset_token import PasswordResetToken  # noqa: F401 — register table
 from adminfoundry.models.role_permission import RolePermission  # noqa: F401 — register table
 from adminfoundry.models.tenant_membership import TenantMembership  # noqa: F401 — register table
+from adminfoundry.models.permission_catalog import PermissionCatalog  # noqa: F401 — register table
 from adminfoundry.auth import hash_password
 from adminfoundry.token_blacklist import clear_blacklist
 

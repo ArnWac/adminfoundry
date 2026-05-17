@@ -36,10 +36,34 @@ class GUID(TypeDecorator):
 
 
 class Base(DeclarativeBase):
-    pass
+    """Global (public-schema) declarative base. All shared models inherit from this."""
+
+
+class TenantBase(DeclarativeBase):
+    """Tenant-schema declarative base. Tenant-local models inherit from this.
+
+    TenantBase.metadata drives migrations/tenant/ and is separate from
+    Base.metadata so that shared and tenant migrations never overlap.
+    """
 
 
 class TimestampedBase(Base):
+    __abstract__ = True
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID, primary_key=True, default=uuid.uuid4
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+class TenantTimestampedBase(TenantBase):
+    """TenantBase equivalent of TimestampedBase."""
+
     __abstract__ = True
 
     id: Mapped[uuid.UUID] = mapped_column(
