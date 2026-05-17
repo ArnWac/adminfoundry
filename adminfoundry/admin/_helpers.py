@@ -134,7 +134,7 @@ def _check_model_access(
             )
 
 
-def _require_superadmin_or_impersonating(user, token_payload: dict, request: Request) -> None:
+def _require_superadmin_or_impersonating(user, token_payload: dict, request: Request, membership=None) -> None:
     """Allow superadmin (root panel or impersonating) OR tenant admin in their own tenant."""
     runtime = _get_runtime(request)
     if runtime is not None:
@@ -146,8 +146,10 @@ def _require_superadmin_or_impersonating(user, token_payload: dict, request: Req
         return
     tenant = getattr(request.state, "tenant", None)
     if tenant is not None:
-        for r in (user.roles or []):
-            if r.name == "tenant_admin" and r.tenant_id == tenant.id:
+        # Roles come from membership (not user.roles) to prevent cross-tenant leakage.
+        effective_roles = list(membership.roles) if membership is not None else []
+        for r in effective_roles:
+            if r.name == "tenant_admin" and str(r.tenant_id) == str(tenant.id):
                 return
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superadmin required")
 

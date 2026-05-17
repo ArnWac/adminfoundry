@@ -13,6 +13,7 @@ from adminfoundry.admin.registry import admin_site
 from adminfoundry.database import get_db
 from adminfoundry.dependencies import get_current_user
 from adminfoundry.models.user import User
+from adminfoundry.tenancy.dependencies import require_tenant_membership
 
 router = APIRouter()
 
@@ -31,10 +32,12 @@ def _scoped_model_names(payload: dict, request: Request) -> list[str]:
 async def get_permission_matrix_template(
     request: Request,
     current_user: User = Depends(get_current_user),
+    _membership=Depends(require_tenant_membership),
 ):
     """Return the full model list with all permissions false — used by the create-role form."""
     payload = getattr(request.state, "token_payload", {})
-    _require_superadmin_or_impersonating(current_user, payload, request)
+    membership = getattr(request.state, "tenant_membership", None)
+    _require_superadmin_or_impersonating(current_user, payload, request, membership=membership)
     names = _scoped_model_names(payload, request)
 
     return [
@@ -56,10 +59,12 @@ async def get_permission_matrix(
     request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _membership=Depends(require_tenant_membership),
 ):
     """Return CRUD caps for every registered model for this role."""
     payload = getattr(request.state, "token_payload", {})
-    _require_superadmin_or_impersonating(current_user, payload, request)
+    membership = getattr(request.state, "tenant_membership", None)
+    _require_superadmin_or_impersonating(current_user, payload, request, membership=membership)
 
     from sqlalchemy import select as _select
     from adminfoundry.models.role_permission import RolePermission
@@ -91,10 +96,12 @@ async def save_permission_matrix(
     request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _membership=Depends(require_tenant_membership),
 ):
     """Replace all RolePermission records for this role with the submitted matrix."""
     payload = getattr(request.state, "token_payload", {})
-    _require_superadmin_or_impersonating(current_user, payload, request)
+    membership = getattr(request.state, "tenant_membership", None)
+    _require_superadmin_or_impersonating(current_user, payload, request, membership=membership)
 
     from sqlalchemy import delete as _delete, select as _select
     from adminfoundry.models.role_permission import RolePermission

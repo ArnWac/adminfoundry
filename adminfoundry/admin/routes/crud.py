@@ -34,6 +34,18 @@ from adminfoundry.tenancy.dependencies import require_tenant_membership
 router = APIRouter()
 
 
+def _inject_tenant_id(data: dict, model_admin, request: Request, payload: dict) -> dict:
+    """Stamp tenant_id onto data for tenant-scoped models. No-op otherwise."""
+    if not (model_admin.tenant_scoped and _get_multi_tenant_flag(request) and hasattr(model_admin.model, "tenant_id")):
+        return data
+    tenant = getattr(request.state, "tenant", None)
+    if tenant is not None:
+        data.setdefault("tenant_id", str(tenant.id))
+    elif payload.get("impersonated_by") and payload.get("tenant_id"):
+        data.setdefault("tenant_id", payload["tenant_id"])
+    return data
+
+
 @router.get("/{model_name}")
 async def list_objects(
     model_name: str,
@@ -116,14 +128,10 @@ async def create_object(
                 detail=f"Field '{field_name}' is not editable",
             )
 
-    data = model_admin.before_create(validated.model_dump(exclude_none=True))
-
-    if model_admin.tenant_scoped and _get_multi_tenant_flag(request) and hasattr(model_admin.model, "tenant_id"):
-        tenant = getattr(request.state, "tenant", None)
-        if tenant is not None:
-            data.setdefault("tenant_id", str(tenant.id))
-        elif payload.get("impersonated_by") and payload.get("tenant_id"):
-            data.setdefault("tenant_id", payload["tenant_id"])
+    data = _inject_tenant_id(
+        model_admin.before_create(validated.model_dump(exclude_none=True)),
+        model_admin, request, payload,
+    )
 
     obj = model_admin.model(**data)
     db.add(obj)
@@ -197,7 +205,10 @@ async def import_objects(
         clean = {k: v for k, v in row.items() if v != ""}
         try:
             validated = create_schema.model_validate(clean)
-            data = model_admin.before_create(validated.model_dump(exclude_none=True))
+            data = _inject_tenant_id(
+                model_admin.before_create(validated.model_dump(exclude_none=True)),
+                model_admin, request, payload,
+            )
             if not dry_run:
                 obj = model_admin.model(**data)
                 db.add(obj)
@@ -609,9 +620,11 @@ async def hard_delete_object(
     payload = getattr(request.state, "token_payload", {})
     _check_model_access(model_admin, current_user, payload, tenant=getattr(request.state, "tenant", None), multi_tenant=_get_multi_tenant_flag(request))
 
-    obj = (
-        await db.execute(select(model_admin.model).where(model_admin.model.id == object_id))
-    ).scalar_one_or_none()
+    stmt = select(model_admin.model).where(model_admin.model.id == object_id)
+    tf = _tenant_filter(request, model_admin)
+    if tf is not None:
+        stmt = stmt.where(tf)
+    obj = (await db.execute(stmt)).scalar_one_or_none()
     if obj is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Object not found")
 

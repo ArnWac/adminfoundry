@@ -88,6 +88,12 @@ async def assign_role(
     if role is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
 
+    if role.tenant_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tenant-scoped roles must be assigned through TenantMembership, not user_roles",
+        )
+
     # Reject duplicate assignment cleanly
     already = await db.execute(
         select(user_roles).where(

@@ -68,7 +68,7 @@ async def admin_capabilities(
     )
     return build_capabilities(
         current_user, payload, admin_site, all_db_caps or None,
-        in_tenant_context=in_tenant_context,
+        in_tenant_context=in_tenant_context, membership=membership,
     )
 
 

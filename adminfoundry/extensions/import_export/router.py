@@ -24,6 +24,7 @@ from adminfoundry.extensions.import_export.schemas import (
 )
 from adminfoundry.extensions.import_export.service import import_export_service
 from adminfoundry.models.user import User
+from adminfoundry.tenancy.dependencies import require_tenant_membership
 
 router = APIRouter(prefix="/api/v1/admin", tags=["import-export"])
 
@@ -68,10 +69,12 @@ async def export_model(
 
     model_admin = _get_admin_or_404(model_name)
     token_payload = getattr(request.state, "token_payload", {})
+    membership = getattr(request.state, "tenant_membership", None)
     _check_model_access(
         model_admin, current_user, token_payload,
         tenant=getattr(request.state, "tenant", None),
         multi_tenant=_get_multi_tenant_flag(request),
+        membership=membership,
     )
 
     _target_zone = None
@@ -99,7 +102,7 @@ async def export_model(
         stmt = stmt.where(tf)
     rf = policy_engine.get_record_filter(current_user, model_admin, token_payload)
     if rf is not None:
-        stmt = stmt.where(rf)
+        stmt = stmt.where(rf)  # record_filter is a model-defined hook, not role-based
     search = filter_builder.build_search(model_admin, q)
     if search is not None:
         stmt = stmt.where(search)
@@ -117,7 +120,7 @@ async def export_model(
     for col in model_admin.model.__table__.columns:
         if col.name in excluded:
             continue
-        fp = policy_engine.evaluate_field(current_user, model_admin, col.name, token_payload)
+        fp = policy_engine.evaluate_field(current_user, model_admin, col.name, token_payload, membership=membership)
         if not fp.can_view:
             continue
         header = f"{col.name} ({tz})" if tz and _is_dt_col(col) else col.name
@@ -248,10 +251,18 @@ async def bulk_action(
     request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    _membership=Depends(require_tenant_membership),
 ):
     """Execute a declared bulk action on a set of objects."""
     model_admin = _get_admin_or_404(model_name)
     token_payload = getattr(request.state, "token_payload", {})
+    membership = getattr(request.state, "tenant_membership", None)
+    _check_model_access(
+        model_admin, current_user, token_payload,
+        tenant=getattr(request.state, "tenant", None),
+        multi_tenant=_get_multi_tenant_flag(request),
+        membership=membership,
+    )
 
     from adminfoundry.admin.actions import AdminAction as _AdminAction
 
@@ -279,7 +290,7 @@ async def bulk_action(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Action '{body.action}' does not support bulk execution",
         )
-    if not policy_engine.can_perform_action(current_user, model_admin, body.action, token_payload):
+    if not policy_engine.can_perform_action(current_user, model_admin, body.action, token_payload, membership):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Action not permitted")
 
     job = None
@@ -300,11 +311,11 @@ async def bulk_action(
                 "message": "Duplicate submission — existing job returned",
             }
 
-    objects = (
-        await db.execute(
-            select(model_admin.model).where(model_admin.model.id.in_(body.object_ids))
-        )
-    ).scalars().all()
+    stmt = select(model_admin.model).where(model_admin.model.id.in_(body.object_ids))
+    tf = _tenant_filter(request, model_admin)
+    if tf is not None:
+        stmt = stmt.where(tf)
+    objects = (await db.execute(stmt)).scalars().all()
 
     result_summary = f"Bulk '{body.action}' applied to {len(objects)} objects"
     try:
