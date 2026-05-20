@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ admin_title }}</title>
+  <link rel="stylesheet" href="{{ admin_ui_path }}/static/admin.css">
+</head>
+<body
+  data-view="{{ view }}"
+  {% if resource %}data-resource="{{ resource }}"{% endif %}
+  {% if record_id %}data-record-id="{{ record_id }}"{% endif %}
+>
+  <header class="topbar">
+    <a class="brand" href="{{ admin_ui_path }}/dashboard">{{ admin_title }}</a>
+    <button id="signout" type="button">Sign out</button>
+  </header>
+  <main id="app-root" data-loading="true">
+    <p>Loading…</p>
+  </main>
+  <script>
+    window.ADMINFOUNDRY = {
+      uiPath: {{ admin_ui_path | tojson }},
+      authPrefix: {{ auth_api_prefix | tojson }},
+      adminPrefix: {{ admin_api_prefix | tojson }},
+      view: {{ view | tojson }},
+      resource: {{ resource | tojson }},
+      recordId: {{ record_id | tojson }},
+    };
+  </script>
+  <script src="{{ admin_ui_path }}/static/admin.js"></script>
+</body>
+</html>

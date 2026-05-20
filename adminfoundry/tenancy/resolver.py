@@ -1,7 +1,7 @@
-"""Tenant resolution: slug extraction, caching, DB lookup, impersonation."""
+"""Tenant resolution: slug extraction, in-memory caching, DB lookup."""
+
 from __future__ import annotations
 
-import json
 import time
 import uuid
 
@@ -9,17 +9,9 @@ from sqlalchemy import select
 from starlette.requests import Request
 
 from adminfoundry.models.tenant import Tenant
-from adminfoundry.schemas.tenant import RESERVED_SLUGS
-from adminfoundry.settings import settings
 from adminfoundry.tenancy.context import TenantContext
 
-# Module-level sentinel: tests can patch this attribute to inject a fake session factory.
-# When None the resolver imports the live AsyncSessionLocal from database at call time.
-AsyncSessionLocal = None
-
 _TENANT_TTL = 30  # seconds
-_REDIS_PREFIX = "tenant:"
-
 _tenant_cache: dict[str, tuple] = {}
 
 
@@ -38,46 +30,26 @@ def _mem_set(slug: str, ctx: TenantContext | None) -> None:
     _tenant_cache[slug] = (ctx, time.monotonic() + _TENANT_TTL)
 
 
-def _serialize(ctx: TenantContext) -> str:
-    return json.dumps(ctx.to_dict())
-
-
-def _deserialize(raw: str) -> TenantContext | None:
-    data = json.loads(raw)
-    if data is None:
-        return None
-    return TenantContext.from_dict(data)
-
-
-async def _redis_get(client, slug: str) -> tuple[bool, TenantContext | None]:
-    raw = await client.get(f"{_REDIS_PREFIX}{slug}")
-    if raw is None:
-        return False, None
-    return True, _deserialize(raw)
-
-
-async def _redis_set(client, slug: str, ctx: TenantContext | None) -> None:
-    value = _serialize(ctx) if ctx is not None else json.dumps(None)
-    await client.setex(f"{_REDIS_PREFIX}{slug}", _TENANT_TTL, value)
-
-
-def _get_resolution_strategy(request: Request) -> str:
+def _get_resolution_strategy(request: Request) -> tuple[str, str]:
+    """Return (strategy, header_name) from runtime config or defaults."""
     runtime = getattr(getattr(request.app, "state", None), "adminfoundry", None)
     if runtime is not None:
-        return runtime.config.tenant_resolution or "header"
-    return settings.TENANT_RESOLUTION_STRATEGY
+        return (
+            runtime.config.tenant_resolution or "header",
+            runtime.config.tenant_header_name or "X-Tenant-Slug",
+        )
+    return "header", "X-Tenant-Slug"
 
 
 def _extract_slug(request: Request) -> str | None:
-    if _get_resolution_strategy(request) == "subdomain":
+    strategy, header_name = _get_resolution_strategy(request)
+    if strategy == "subdomain":
         host = request.headers.get("host", "").split(":")[0]
         parts = host.split(".")
         if len(parts) >= 2:
-            candidate = parts[0]
-            if candidate not in RESERVED_SLUGS:
-                return candidate
+            return parts[0]
         return None
-    return request.headers.get("X-Tenant-Slug")
+    return request.headers.get(header_name)
 
 
 async def resolve_tenant(request: Request) -> TenantContext | None:
@@ -86,26 +58,14 @@ async def resolve_tenant(request: Request) -> TenantContext | None:
     if not slug:
         return None
 
-    from adminfoundry.cache import get_redis
-    client = get_redis()
-
-    if client:
-        hit, ctx = await _redis_get(client, slug)
-    else:
-        hit, ctx = _mem_get(slug)
-
+    hit, ctx = _mem_get(slug)
     if not hit:
-        _session_local = AsyncSessionLocal  # may be patched in tests
-        if _session_local is None:
-            from adminfoundry.database import AsyncSessionLocal as _session_local
-        async with _session_local() as session:
+        runtime = request.app.state.adminfoundry
+        async with runtime.db.session() as session:
             result = await session.execute(select(Tenant).where(Tenant.slug == slug))
             tenant = result.scalar_one_or_none()
         ctx = TenantContext.from_orm(tenant) if tenant is not None else None
-        if client:
-            await _redis_set(client, slug, ctx)
-        else:
-            _mem_set(slug, ctx)
+        _mem_set(slug, ctx)
 
     return ctx
 
@@ -113,18 +73,12 @@ async def resolve_tenant(request: Request) -> TenantContext | None:
 async def resolve_impersonation_tenant(
     payload: dict, current_tenant: TenantContext | None, db
 ) -> TenantContext | None:
-    """Return TenantContext for a same-origin impersonation token.
-
-    Returns current_tenant unchanged when it is already set, or when the
-    token carries no tenant_id.
-    """
+    """Return TenantContext for a same-origin impersonation token."""
     if current_tenant is not None:
         return current_tenant
     if not (payload.get("impersonated_by") and payload.get("tenant_id")):
         return None
     tenant = (
-        await db.execute(
-            select(Tenant).where(Tenant.id == uuid.UUID(payload["tenant_id"]))
-        )
+        await db.execute(select(Tenant).where(Tenant.id == uuid.UUID(payload["tenant_id"])))
     ).scalar_one_or_none()
     return TenantContext.from_orm(tenant) if tenant is not None else None

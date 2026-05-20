@@ -1,24 +1,23 @@
-from adminfoundry.models.associations import membership_roles, user_roles
 from adminfoundry.models.audit_log import AuditLog
 from adminfoundry.models.impersonation_log import ImpersonationLog
-from adminfoundry.models.password_reset_token import PasswordResetToken
-from adminfoundry.models.revoked_token import RevokedToken
-from adminfoundry.models.role import Role
-from adminfoundry.models.role_permission import RolePermission
+from adminfoundry.models.permission_catalog import PermissionCatalog
 from adminfoundry.models.tenant import Tenant
 from adminfoundry.models.tenant_membership import TenantMembership
+from adminfoundry.models.tenant_rbac import (
+    TenantMembershipRole,
+    TenantRole,
+    TenantRolePermission,
+)
 from adminfoundry.models.user import User
 
 __all__ = [
     "AuditLog",
     "ImpersonationLog",
-    "PasswordResetToken",
-    "RevokedToken",
-    "Role",
-    "RolePermission",
+    "PermissionCatalog",
     "Tenant",
     "TenantMembership",
+    "TenantMembershipRole",
+    "TenantRole",
+    "TenantRolePermission",
     "User",
-    "membership_roles",
-    "user_roles",
 ]

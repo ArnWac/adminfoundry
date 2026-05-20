@@ -1,85 +1,58 @@
-"""App factory — owns `create_admin()`.
-
-Factory-only: always creates and returns a new FastAPI app. Existing-app
-mounting is not supported in V1.
-"""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Callable
 
-if TYPE_CHECKING:
-    from fastapi import FastAPI
+from fastapi import FastAPI
+
+from adminfoundry.builtins import install_builtin_admins
+from adminfoundry.core.config import CoreAdminConfig
+from adminfoundry.core.errors import register_error_handlers
+from adminfoundry.core.installers import install_middleware, install_routes
+from adminfoundry.core.logging import configure_logging
+from adminfoundry.core.runtime import AdminRuntime
+from adminfoundry.db.session import DatabaseManager
+from adminfoundry.registry import AdminRegistry
 
 
 def create_admin(
+    config: CoreAdminConfig | None = None,
     *,
-    config=None,
-    title: str | None = None,
-    lifespan=None,
+    register: Callable[[AdminRegistry], None] | None = None,
     **fastapi_kwargs,
-) -> "FastAPI":
-    """Create and return a fully configured FastAPI admin app.
+) -> FastAPI:
+    config = config or CoreAdminConfig.from_env()
+    config.validate()
 
-    Example::
+    configure_logging(config)
 
-        from adminfoundry import create_admin, CoreAdminConfig
-
-        app = create_admin(
-            config=CoreAdminConfig.from_settings(settings),
-            title="My Admin",
-        )
-
-    ``config`` must be passed as a keyword argument. To mount adminfoundry
-    onto an existing FastAPI app, use a separate `mount_admin()` API (not yet
-    implemented in V1).
-    """
-    from fastapi import FastAPI
-    from adminfoundry.admin.dashboard.registry import DashboardRegistry
-    from adminfoundry.auth_provider import AuthProvider
-    from adminfoundry.core.config import CoreAdminConfig
-    from adminfoundry.core.events import EventBus
-    from adminfoundry.core.installers import (
-        install_admin_api,
-        install_audit,
-        install_builtin_ui,
-        install_core_routers,
-        install_exception_handlers,
-        install_extensions,
-        install_framework_defaults,
-        install_middleware,
-        install_state,
-        make_lifespan,
+    app = FastAPI(
+        title=config.app_title,
+        debug=config.debug,
+        **fastapi_kwargs,
     )
-    from adminfoundry.core.runtime import AdminRuntime
-    from adminfoundry.extensions import ExtensionRegistry
-    from adminfoundry.settings import settings as _settings
-
-    config = config or CoreAdminConfig()
-
-    effective_lifespan = make_lifespan(
-        lifespan,
-        _settings.ENABLE_CLEANUP_TASK,
-        _settings.CLEANUP_INTERVAL_SECONDS,
-    )
-    app = FastAPI(title=title or "adminfoundry", lifespan=effective_lifespan, **fastapi_kwargs)
 
     runtime = AdminRuntime(
         config=config,
-        auth_provider=config.auth_provider or AuthProvider(),
-        extension_registry=ExtensionRegistry(),
-        dashboard_registry=DashboardRegistry(),
-        event_bus=EventBus(),
+        db=DatabaseManager(
+            config.database_url,
+            echo=config.debug,
+            pool_size=config.db_pool_size,
+            max_overflow=config.db_max_overflow,
+            pool_pre_ping=config.db_pool_pre_ping,
+        ),
     )
+
     app.state.adminfoundry = runtime
 
-    install_state(app, runtime)
-    install_exception_handlers(app, runtime)
-    install_middleware(app, runtime)
-    install_framework_defaults(app, runtime)
-    install_core_routers(app, runtime)
-    install_extensions(app, runtime)  # before admin API so extension routes win over /{model_name}
-    install_admin_api(app, runtime)
-    install_builtin_ui(app, runtime)
-    install_audit(app, runtime)
+    register_error_handlers(app)
+    install_middleware(app, config)
+
+    if config.enable_builtin_admins:
+        install_builtin_admins(runtime.registry)
+
+    if register is not None:
+        register(runtime.registry)
+
+    install_routes(app, config)
 
     return app

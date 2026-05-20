@@ -1,10 +1,10 @@
-from sqlalchemy import String, Text, Boolean
+from sqlalchemy import Boolean, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from adminfoundry.models.base import TimestampedBase
+from adminfoundry.models.base import GlobalModel
 
 
-class Post(TimestampedBase):
+class Post(GlobalModel):
     __tablename__ = "posts"
 
     title:     Mapped[str]  = mapped_column(String(255), nullable=False)

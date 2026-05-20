@@ -1,301 +1,186 @@
 # adminfoundry
 
-adminfoundry is a contract-driven FastAPI admin framework for SQLAlchemy applications. The current focus is a stable core API, predictable admin contracts, and a lightweight built-in UI.
+A contract-driven FastAPI admin framework for SQLAlchemy applications.
 
-Register your SQLAlchemy models declaratively and get a generated admin: CRUD routes, bulk actions, audit log, role-based access, optional multi-tenant scoping, a built-in lightweight UI, and a renderer-independent contract API for external clients.
+Register your models declaratively and get a generated admin: CRUD routes,
+permission-key authorization, multi-tenant scoping (PostgreSQL schema-per-tenant),
+audit log, impersonation, a small built-in UI shell, and a JSON contract API
+that any frontend can consume.
 
 ---
 
 ## Install
 
 ```bash
-# PostgreSQL
+# PostgreSQL deployment
 pip install adminfoundry[postgres]
 
 # SQLite (development / testing)
 pip install adminfoundry[sqlite]
-
-# Optional extras
-pip install adminfoundry[redis]   # Redis cache + rate limiting backend
-pip install adminfoundry[s3]      # S3 storage backend
-pip install adminfoundry[xlsx]    # Excel (.xlsx) export
 ```
+
+Requires Python 3.11+.
 
 ---
 
-## Quickstart (single-tenant)
+## Quickstart
 
 ```python
+# app.py
+from sqlalchemy import Boolean, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String
 
-from adminfoundry import create_admin, CoreAdminConfig, ModelAdmin, admin_site
+from adminfoundry import CoreAdminConfig, ModelAdmin, create_admin
 from adminfoundry.actions import BulkDeleteAction
-from adminfoundry.models.base import TimestampedBase
+from adminfoundry.models.base import GlobalModel
 
 
-class Article(TimestampedBase):
-    __tablename__ = "articles"
-    title:     Mapped[str]  = mapped_column(String(255))
-    published: Mapped[bool] = mapped_column(default=False)
+class Post(GlobalModel):
+    __tablename__ = "posts"
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    published: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
-class ArticleAdmin(ModelAdmin):
-    model           = Article
-    list_display    = ["title", "published", "created_at"]
-    search_fields   = ["title"]
-    filter_fields   = ["published"]
+class PostAdmin(ModelAdmin):
+    model = Post
+    list_display = ["id", "title", "published", "created_at"]
+    search_fields = ["title", "body"]
+    ordering = ["-created_at"]
     readonly_fields = ["id", "created_at", "updated_at"]
-    actions         = [BulkDeleteAction()]
+    actions = [BulkDeleteAction()]
 
 
-admin_site.register(ArticleAdmin())
+def register(registry):
+    registry.register(PostAdmin)
 
-app = create_admin(config=CoreAdminConfig(), title="My Admin")
-```
-
-`create_admin()` is a factory: it creates the FastAPI app, installs all core middleware, routers, and the built-in UI, and returns the configured app.
-
-See [`examples/basic_single/`](examples/basic_single/) for a runnable version.
-
----
-
-## Register your first model
-
-1. Define a SQLAlchemy model that inherits from `TimestampedBase` (gives you `id`, `created_at`, `updated_at`).
-2. Subclass `ModelAdmin` and set `model = YourModel`. Pick `list_display`, `search_fields`, `filter_fields`, `readonly_fields`.
-3. Call `admin_site.register(YourAdmin())` at import time.
-4. Call `app = create_admin(config=CoreAdminConfig(), title="My Admin")` to get a fully wired app.
-
-### Framework model defaults
-
-`create_admin()` automatically registers sensible admin configurations for the four built-in framework models: **User**, **Role**, **Tenant** (multi-tenant only), and **AuditLog**. You get full CRUD, search, filters, and actions for these with zero configuration.
-
-**Override** a default by registering your own class before calling `create_admin()`:
-
-```python
-from adminfoundry import ModelAdmin, admin_site
-from adminfoundry.models.user import User
-from adminfoundry.actions import DeactivateUsersAction, BulkDeleteAction
-
-class MyUserAdmin(ModelAdmin):
-    model       = User
-    list_display = ["email", "department", "is_active"]
-    extra_create_fields = {"set_password": str}
-
-    @classmethod
-    def before_create(cls, data: dict) -> dict:
-        from adminfoundry.auth import hash_password
-        plain = data.pop("set_password", None)
-        if plain:
-            data["hashed_password"] = hash_password(plain)
-        return data
-
-admin_site.register(MyUserAdmin())   # registered before create_admin() → replaces default
-app = create_admin(config=CoreAdminConfig(), title="My Admin")
-```
-
-**Add** an app-specific model the same way — framework defaults and your registrations coexist:
-
-```python
-admin_site.register(ArticleAdmin())  # app model — added on top of framework defaults
-app = create_admin(config=CoreAdminConfig(), title="My Admin")
-```
-
-Common attributes:
-
-| Attribute | Purpose |
-|-----------|---------|
-| `list_display` | Columns shown in list view. |
-| `search_fields` | Fields the search box matches against. |
-| `filter_fields` | Fields exposed as filters. |
-| `readonly_fields` | Fields rejected on create/update. |
-| `protected_fields` | Fields excluded from list / detail / contract payloads. |
-| `actions` | List of `AdminAction` instances available for bulk/single operations. |
-| `tenant_scoped` | If True, list/detail are filtered by the active tenant. |
-| `computed_fields` | Dict of `name → callable(obj)` for derived list columns. |
-
----
-
-## Multi-tenant
-
-```python
-from adminfoundry import create_admin, CoreAdminConfig
-from adminfoundry.settings import settings
-
-config = CoreAdminConfig.from_settings(settings)
-config.enable_multi_tenant = True
-config.tenant_resolution = "subdomain"   # or "header" for X-Tenant-Slug
-
-app = create_admin(config=config, title="My SaaS Admin", lifespan=lifespan)
-```
-
-`create_admin()` adds `TenantMiddleware` automatically when `enable_multi_tenant=True`. No manual middleware wiring required.
-
-See [`examples/basic_multi/`](examples/basic_multi/) for a runnable subdomain-based SaaS example.
-
-Multi-tenancy ships with two strategies: row-level (every `tenant_scoped` model carries `tenant_id`) and schema-level (one PostgreSQL schema per tenant). Row-level is covered by tests. Schema-level is wired but lacks end-to-end PostgreSQL test coverage — see the roadmap below.
-
----
-
-## Extensions
-
-Optional extensions are registered via `CoreAdminConfig.extensions`. Each extension implements `ExtensionBase` and can contribute routers, models, dashboard widgets, admin registrations, and an EventBus subscription.
-
-```python
-from adminfoundry import create_admin, CoreAdminConfig
-from adminfoundry.extensions.jobs import JobsExtension
-from adminfoundry.extensions.import_export import ImportExportExtension
-from adminfoundry.extensions.observability import ObservabilityExtension
-from adminfoundry.extensions.webhooks import WebhookExtension
 
 app = create_admin(
-    config=CoreAdminConfig(
-        extensions=[
-            JobsExtension(),
-            ImportExportExtension(),   # requires JobsExtension
-            ObservabilityExtension(),  # subscribes to EventBus metrics
-            WebhookExtension(),        # HTTP delivery of admin signal events
-        ],
-    ),
-    title="My Admin",
+    config=CoreAdminConfig.from_env(),
+    register=register,
 )
 ```
-
-**Available extensions:**
-
-| Extension | Provides |
-|-----------|----------|
-| `JobsExtension` | Background job model, status tracking (`GET /api/v1/jobs`) |
-| `ImportExportExtension` | CSV/JSON/XLSX export, dry-run import, bulk actions (`/api/v1/admin/{model}/export` etc.) |
-| `ObservabilityExtension` | Request counters, audit-failure metrics, Prometheus export, dashboard widget |
-| `WebhookExtension` | HTTP delivery of signal events, admin CRUD for subscriptions, HMAC signing |
-| `WorkflowsExtension` | Change-approval workflow for sensitive fields |
-
-**Root-level submodule paths for non-root exports:**
-
-```python
-from adminfoundry.actions import BulkDeleteAction, DeactivateUsersAction
-from adminfoundry.admin.dashboard.widget import DashboardWidget
-from adminfoundry.cache import cache
-from adminfoundry.storage import storage
-from adminfoundry.i18n import t
-```
-
----
-
-## Storage backends
-
-The default storage backend is `LocalStorage("uploads")`. Wire an alternative through `CoreAdminConfig.storage_backend`:
-
-```python
-from adminfoundry import create_admin, CoreAdminConfig
-from adminfoundry.extensions.storage_s3 import S3Storage
-
-config = CoreAdminConfig(
-    storage_backend=S3Storage(bucket="my-bucket", region="eu-central-1"),
-)
-app = create_admin(config=config)
-```
-
-`S3Storage` lives under `adminfoundry/extensions/` because it pulls the optional `boto3` dependency (install via `pip install adminfoundry[s3]`). It is **not** an `ExtensionBase` plugin — provider backends are wired through dedicated config fields rather than `CoreAdminConfig.extensions`. Core never eagerly imports `boto3`.
-
----
-
-## Feature status
-
-| Stable | Experimental | Planned |
-|--------|--------------|---------|
-| Registry / `ModelAdmin` | Multi-tenancy (SQLite-tested only) | PostgreSQL schema multi-tenancy (end-to-end) |
-| Dynamic schema builder + serializer | Approval workflow (backend only) | SCIM / SAML |
-| CRUD routes | Signals | Flutter / external UI |
-| Contract API (`/api/v1/admin/...`) | Dashboard widgets | Billing / metering |
-| Protected field handling | Background jobs extension | White-labeling |
-| JWT auth + RBAC | CSV import | Advanced workflow approvals |
-| Built-in lightweight UI | Soft delete | |
-| Common actions (`adminfoundry.actions`) | Computed fields | |
-| Audit log | i18n / locale | |
-
-Stable features have tests and runnable examples. Experimental features work in the happy path but lack one or more of: real-PostgreSQL coverage, end-to-end UI, or stability guarantees across releases.
-
----
-
-## Roadmap / Next milestone — PostgreSQL schema-based tenancy
-
-The next milestone is full PostgreSQL schema-based multi-tenancy. Scope:
-
-- Shared schema (users, roles, tenants, audit log) and one schema per tenant for domain data.
-- Alembic configs for both: `alembic_shared.ini` (exists) and `alembic_tenant.ini` (exists, skeletal).
-- Integration tests against a real PostgreSQL service.
-- Tenant isolation tests (one tenant cannot read or write rows of another).
-- Schema creation + seeding on tenant creation, including initial Alembic stamp.
-- Tenant-aware async session factory cached per schema with `search_path` injection-safe.
-
-See [`docs/roadmap-postgres-tenancy.md`](docs/roadmap-postgres-tenancy.md) for the full plan and current limitations.
-
----
-
-## Examples
-
-| Example | Description |
-|---------|-------------|
-| [`examples/basic_single/`](examples/basic_single/) | Single-tenant blog: `PostAdmin` with computed fields and bulk delete. Framework model defaults (User, AuditLog, …) require no extra code. |
-| [`examples/basic_multi/`](examples/basic_multi/) | Multi-tenant SaaS: tenant-scoped `ProjectAdmin`. Framework defaults cover User, Role, Tenant, and AuditLog automatically. Seeds 1 superadmin + 2 tenants + 2 tenant admins. |
-
-Run them:
 
 ```bash
-make dev-single   # uvicorn examples.basic_single.app:app
-make dev-multi    # uvicorn examples.basic_multi.app:app
+export ADMINFOUNDRY_DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/myapp"
+export ADMINFOUNDRY_SECRET_KEY="$(openssl rand -hex 32)"
+
+adminfoundry db upgrade-public
+adminfoundry permissions sync --app app:app
+adminfoundry create-superadmin --email admin@example.com
+
+uvicorn app:app --reload
 ```
 
-Both print demo credentials on startup.
+Then visit `http://127.0.0.1:8000/admin/login` and sign in.
 
 ---
 
-## Docs
+## What you get
 
-- [Architecture](docs/architecture.md)
-- [Tenancy](docs/tenancy.md)
-- [Security](docs/security.md)
-- [ModelAdmin configuration](docs/model-admin.md)
-- [Protected fields](docs/protected-fields.md)
-- [Roadmap — PostgreSQL schema tenancy](docs/roadmap-postgres-tenancy.md)
+| Route prefix | Purpose |
+|---|---|
+| `/api/v1/auth/{login,me}` | JWT auth + logout-all (token_version revocation) |
+| `/api/v1/admin/_contract` | Per-resource metadata so a UI can render forms generically |
+| `/api/v1/admin/{resource}` | CRUD for tenant-local resources, permission-key gated |
+| `/api/v1/admin/{resource}/_actions/{action}` | Run a declared admin action over a list of records |
+| `/api/v1/root/impersonate` | Superadmin starts an impersonation session |
+| `/api/v1/root/{users,tenants}` | Superadmin-only global views |
+| `/admin/...` | Minimal SPA shell (login + dashboard + per-resource pages) |
+| `/healthz`, `/readyz` | Liveness + readiness probes |
+
+Every API error follows one envelope:
+
+```json
+{
+  "error": {
+    "code": "validation_error",
+    "message": "Payload contains non-writable fields.",
+    "fields": [{"name": "password", "message": "Invalid field."}],
+    "request_id": "8e1f..."
+  }
+}
+```
+
+Every response carries `X-Request-ID` (echoed from the inbound header or
+generated). Audit rows, error envelopes, and structured logs all reference
+the same id.
+
+---
+
+## Multi-tenancy in one paragraph
+
+A tenant is a row in `public.tenants` with a dedicated PostgreSQL schema
+named `tenant_<slug>`. Each tenant schema holds `tenant_roles`,
+`tenant_role_permissions`, `tenant_membership_roles`. Incoming requests
+carry the tenant slug via the `X-Tenant-Slug` header (default; configurable).
+`TenantMiddleware` resolves the slug → `TenantContext`; the
+`require_tenant_auth_context` dependency `SET LOCAL search_path` on the
+request-scoped session and loads the user's tenant-local roles +
+permission keys. CRUD reads/writes happen on the same session, so tenant
+data isolation comes from PostgreSQL, not from filters in Python.
+
+PostgreSQL is required for real isolation. On SQLite (used for tests)
+schema-per-tenant degrades to "single shared namespace" — fine for unit
+tests, never for production.
 
 ---
 
 ## CLI
 
 ```bash
-adminfoundry init [dir]                 # scaffold a minimal app
-adminfoundry create-superadmin          # interactive superadmin creation
-adminfoundry create-user                # create a regular user, optionally with a role
-adminfoundry seed-roles [--grant-...]   # seed default admin/user roles
-adminfoundry inspect-registry           # list registered models + fields + actions
-adminfoundry doctor                     # DB connectivity + registry + extensions health
-adminfoundry db check                   # check DB connectivity
-adminfoundry db upgrade [--env]         # run alembic upgrade head
-adminfoundry migrate generate -m "..."  # alembic revision --autogenerate
-adminfoundry migrate apply              # alembic upgrade head
-adminfoundry migrate status             # current revision + heads
-adminfoundry extensions list            # list registered extensions
-adminfoundry extensions check           # run startup_check() on each
-adminfoundry tenant migrate <slug>      # create PG schema for a tenant
-adminfoundry tenant upgrade --all       # run tenant schema migrations for all active tenants
-```
+adminfoundry --help
 
-`adminfoundry doctor` and `adminfoundry inspect-registry` work without an admin app — but they only see models you have already imported. Run them inside your application's process or after `python -c "import myapp.admin_config"`.
+# Database lifecycle
+adminfoundry db upgrade-public
+adminfoundry db upgrade-tenant <slug>
+adminfoundry db upgrade-tenants
+
+# Tenants
+adminfoundry tenant create --name "Acme" --slug acme --owner-email owner@example.com
+adminfoundry tenant list
+adminfoundry tenant bootstrap <slug>
+
+# Users
+adminfoundry create-superadmin --email admin@example.com
+
+# Permission catalog
+adminfoundry permissions sync --app app:app
+adminfoundry permissions list
+adminfoundry permissions check admin.users.list
+
+# Diagnostics
+adminfoundry doctor
+```
 
 ---
 
-## Environment
+## Documentation
 
-Key variables (see [`.env.example`](.env.example)):
+- [`docs/architecture.md`](docs/architecture.md) — package layout + request lifecycle
+- [`docs/security.md`](docs/security.md) — auth, permissions, secret handling, audit
+- [`docs/tenancy.md`](docs/tenancy.md) — schema-per-tenant strategy + bootstrap
+- [`docs/model-admin.md`](docs/model-admin.md) — `ModelAdmin` API reference
+- [`docs/deployment.md`](docs/deployment.md) — Docker, env, health probes, observability
 
+---
+
+## Development
+
+```bash
+git clone https://github.com/ArnWac/adminfoundry
+cd adminfoundry
+pip install -e ".[dev]"
+docker-compose up -d db                       # optional, for postgres tests
+export ADMINFOUNDRY_TEST_POSTGRES_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/adminfoundry
+pytest -q
+pytest -m postgres -q                         # only with the env var above
+ruff check .
+ruff format --check .
 ```
-DATABASE_URL=postgresql+asyncpg://...
-SECRET_KEY=...
-MULTI_TENANT=false
-TENANT_RESOLUTION_STRATEGY=header    # or: subdomain
-ADMIN_UI_PATH=/admin-ui
-```
+
+---
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).

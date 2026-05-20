@@ -1,95 +1,132 @@
-# ModelAdmin Configuration
+# ModelAdmin API reference
 
-## Minimal Example
+Subclass `adminfoundry.ModelAdmin`, set a few class attributes, register
+it. The framework derives CRUD routes, a JSON contract, payload validators,
+and a serializer from the declaration.
 
 ```python
-from adminfoundry import ModelAdmin, admin_site
+from adminfoundry import ModelAdmin
+from adminfoundry.actions import BulkDeleteAction
 
+
+class PostAdmin(ModelAdmin):
+    model            = Post
+    label            = "Post"
+    label_plural     = "Posts"
+    description      = "Blog posts."
+
+    list_display     = ["id", "title", "published", "created_at"]
+    search_fields    = ["title", "body"]
+    ordering         = ["-created_at"]
+
+    readonly_fields  = ["id", "created_at", "updated_at"]
+    protected_fields = ["internal_token"]
+
+    actions = [BulkDeleteAction()]
+
+    calculated_fields = {
+        "word_count": lambda obj: len((obj.body or "").split()),
+    }
+```
+
+## Attribute reference
+
+| Attribute | Type | Purpose |
+|---|---|---|
+| `model` | SQLAlchemy mapped class | Required. The DB model to expose. |
+| `label`, `label_plural`, `description` | `str \| None` | Human-readable. Default derived from `model.__name__`. |
+| `list_display` | `list[str]` | Columns the list-view serializer emits. |
+| `search_fields` | `list[str]` | Columns considered by `?search=...` (ILIKE on stringified value). |
+| `ordering` | `list[str]` | Default ORDER BY. Prefix `-` for descending. |
+| `readonly_fields` | `list[str]` | Rejected on CREATE and UPDATE with `422 validation_error`. |
+| `protected_fields` | `list[str]` | Never serialized; never accepted on writes. Adds to framework-wide `GLOBALLY_PROTECTED`. |
+| `actions` | `list[AdminAction]` | Bulk actions exposed at `POST /{resource}/_actions/{action_name}`. |
+| `calculated_fields` | `dict[str, Callable]` | Read-only computed columns. Surface in contract + serializer. Writes rejected. |
+
+That is the full strict-MVP surface. Everything older
+(`field_policies`, `record_filter`, `permission_matrix`, `widget_overrides`,
+`fieldsets`, `inline_fields`, `allow_import`, `requires_approval`, …)
+was dropped in the v1 cleanup.
+
+## Built-in admins
+
+Three tenant-local admins ship pre-registered when
+`enable_builtin_admins=True` (default):
+
+| Class | Resource | Purpose |
+|---|---|---|
+| `TenantRoleAdmin` | `tenant_roles` | Manage tenant-local roles |
+| `TenantRolePermissionAdmin` | `tenant_role_permissions` | Manage role-to-permission-key assignments |
+| `TenantMembershipRoleAdmin` | `tenant_membership_roles` | Manage which membership has which role |
+
+## Calculated fields
+
+```python
 class ArticleAdmin(ModelAdmin):
     model = Article
-    list_display = ["title", "published", "created_at"]
-    search_fields = ["title"]
-    filter_fields = ["published"]
-    readonly_fields = ["id", "created_at", "updated_at"]
-
-admin_site.register(ArticleAdmin())
+    list_display = ["id", "title", "word_count"]
+    calculated_fields = {
+        "word_count":   lambda obj: len((obj.body or "").split()),
+        "display_name": lambda obj: f"[{obj.id}] {obj.title}",
+    }
 ```
 
-## All Options
+- Each callable receives the ORM instance.
+- Values surface in list AND detail serializer output.
+- The contract marks them `calculated=True, read_only=True`.
+- Writes are rejected with 422.
+- Exceptions inside a callable degrade to `null` in the response (no 500).
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `model` | `type` | — | SQLAlchemy model class (**required**) |
-| `label` | `str \| None` | model name | Singular display name |
-| `label_plural` | `str \| None` | label + "s" | Plural display name |
-| `description` | `str \| None` | `None` | Shown in UI as subtitle |
-| `list_display` | `list[str]` | `[]` | Columns shown in the list view |
-| `search_fields` | `list[str]` | `[]` | Fields searched via `?search=` |
-| `filter_fields` | `list[str]` | `[]` | Boolean/choice sidebar filters |
-| `range_filter_fields` | `list[str]` | `[]` | `?field__gte=X&field__lte=Y` filters |
-| `enum_filter_fields` | `list[str]` | `[]` | `?field__in=a,b,c` multi-value filters |
-| `ordering` | `list[str]` | `[]` | Default sort (`-field` for DESC) |
-| `readonly_fields` | `list[str]` | `[]` | Cannot be mutated; 422 on attempt |
-| `protected_fields` | `list[str]` | `[]` | Hidden from all schemas (adds to GLOBALLY_PROTECTED) |
-| `tenant_scoped` | `bool` | `False` | Filter by `tenant_id` in multi-tenant mode |
-| `global_only_in_root_panel` | `bool` | `False` | Root panel shows `WHERE tenant_id IS NULL` instead of all rows |
-| `admin_only` | `bool` | `True` | Requires superadmin; set `False` for role-based access |
-| `access_roles` | `list[str]` | `[]` | Role names that grant access when `admin_only=False` |
-| `field_policies` | `dict` | `{}` | `{field: {"view_roles": [...], "edit_roles": [...]}}`  |
-| `record_filter` | `callable \| None` | `None` | `(user) -> WHERE clause \| None` |
-| `record_access` | `callable \| None` | `None` | `(user, record) -> bool` |
-| `action_policies` | `dict` | `{}` | `{action_name: {"roles": [...]}}` |
-| `actions` | `list` | `[]` | `AdminAction` instances |
-| `async_actions` | `list[str]` | `[]` | Action names executed asynchronously (via jobs) |
-| `requires_approval` | `bool` | `False` | Changes require workflow approval |
-| `lookup_field` | `str \| None` | `list_display[0]` | Field used as label in relation pickers |
-| `inline_fields` | `list[str]` | `[]` | Relationship attrs editable inline |
-| `list_editable` | `list[str]` | `[]` | Fields editable directly in the list |
-| `create_redirect` | `str` | `"list"` | Where to go after create: `"list"` or `"detail"` |
-| `field_choices_urls` | `dict` | `{}` | `{field: url}` — renders a `<select>` |
-| `permission_matrix` | `bool` | `False` | Render permission matrix section (for Role-like models) |
-| `allow_delete` | `bool` | `True` | `False` blocks deletion at the API level |
-| `soft_delete` | `bool` | `False` | DELETE sets `deleted_at` instead of removing the row |
-| `allow_import` | `bool` | `False` | Enable CSV import endpoint and button |
-| `extra_create_fields` | `dict` | `{}` | Virtual create-only fields: `{"field": type}` |
-| `fieldsets` | `list \| None` | `None` | `[("Section", ["field1", "field2"]), …]` |
-| `widget_overrides` | `dict` | `{}` | `{field: "image" \| "file"}` |
-| `computed_fields` | `dict` | `{}` | `{name: callable(obj) -> value}` — read-only virtual columns |
+## Actions
 
-## Lifecycle Hooks
+Subclass `adminfoundry.actions.AdminAction`, set `name` + `label`,
+implement an async `execute(records, session, user) -> dict`. Add the
+instance to a `ModelAdmin.actions` list.
 
 ```python
-@classmethod
-def before_create(cls, data: dict) -> dict:
-    """Transform validated create data before the model instance is built."""
-    ...
+from adminfoundry.actions import AdminAction
 
-@classmethod
-def before_update(cls, data: dict, existing) -> dict:
-    """Transform validated update data before applying to the existing instance."""
-    ...
 
-def field_permission(self, user, field_name: str, record) -> FieldPolicy | None:
-    """Return a FieldPolicy based on current record state, or None to use field_policies."""
-    ...
-```
-
-## AdminAction
-
-```python
-from adminfoundry.admin.actions import AdminAction
-
-class PublishAction(AdminAction):
+class MarkPublished(AdminAction):
     name = "publish"
-    label = "Publish selected"
-    danger = False
-    confirm = True
-    bulk = True
-    single = True
+    label = "Mark as published"
 
-    async def execute(self, objects, db, user):
-        for obj in objects:
-            obj.published = True
-        await db.commit()
-        return {"summary": f"{len(objects)} published"}
+    async def execute(self, records, session, user):
+        for r in records:
+            r.published = True
+        await session.flush()      # NOT commit; transaction is owned by the router
+        return {"affected": len(records), "summary": f"Published {len(records)} post(s)."}
+
+
+class PostAdmin(ModelAdmin):
+    model = Post
+    actions = [MarkPublished()]
+```
+
+The endpoint is `POST /api/v1/admin/posts/_actions/publish` with body
+`{"ids": [...]}`. The required permission is `admin.posts.publish`.
+
+`actions` always includes the implicit `delete` permission through
+`BulkDeleteAction` if you add it.
+
+## Registration
+
+```python
+from adminfoundry import create_admin, CoreAdminConfig
+
+def register(registry):
+    registry.register(PostAdmin)
+    registry.register(CommentAdmin)
+
+app = create_admin(
+    config=CoreAdminConfig.from_env(),
+    register=register,
+)
+```
+
+After registering models, sync the permission catalog so default tenant
+roles have something to grant:
+
+```bash
+ADMINFOUNDRY_APP=app:app adminfoundry permissions sync
 ```

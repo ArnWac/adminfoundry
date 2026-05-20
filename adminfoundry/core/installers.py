@@ -1,176 +1,120 @@
-"""App installer functions.
-
-Each `install_*` takes `(app, runtime)` and performs one focused setup step.
-`create_admin()` orchestrates them in order.
-
-Settings mutation note: `install_state()` still writes a few values back to
-`adminfoundry.settings.settings` because deeply-coupled call sites (auth.py
-JWT encode/decode, database.py engine, tenancy middleware) read those at module
-load time. The canonical source is `runtime.config`; the global settings are
-kept in sync as a transitional measure pending a deeper auth/JWT refactor.
-"""
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-if TYPE_CHECKING:
-    from fastapi import FastAPI
-    from adminfoundry.core.runtime import AdminRuntime
-
-
-def make_lifespan(user_lifespan, enable_cleanup: bool, cleanup_interval: int):
-    """Compose optional periodic cleanup with the user's lifespan."""
-    if not enable_cleanup:
-        return user_lifespan
-
-    @asynccontextmanager
-    async def _cleanup_ctx(app):
-        import asyncio
-        from adminfoundry.cleanup import periodic_cleanup
-        task = asyncio.create_task(periodic_cleanup(interval_seconds=cleanup_interval))
-        try:
-            yield
-        finally:
-            task.cancel()
-            try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
-
-    if user_lifespan is None:
-        return _cleanup_ctx
-
-    @asynccontextmanager
-    async def _composed(app):
-        async with user_lifespan(app):
-            async with _cleanup_ctx(app):
-                yield
-
-    return _composed
+from adminfoundry.actions.router import router as actions_router
+from adminfoundry.auth.router import router as auth_router
+from adminfoundry.contract.router import router as contract_router
+from adminfoundry.core.config import CoreAdminConfig
+from adminfoundry.core.health import router as health_router
+from adminfoundry.core.middleware import (
+    AccessLogMiddleware,
+    RequestIDMiddleware,
+    SecurityHeadersMiddleware,
+)
+from adminfoundry.crud.router import router as crud_router
+from adminfoundry.root.router import router as root_router
 
 
-def install_state(app: "FastAPI", runtime: "AdminRuntime") -> None:
-    from adminfoundry.settings import settings as _settings
-    config = runtime.config
+def install_middleware(
+    app: FastAPI,
+    config: CoreAdminConfig,
+) -> None:
+    """Install middlewares in OUTER→INNER order.
 
-    if config.database_url is not None:
-        _settings.DATABASE_URL = config.database_url
-        import adminfoundry.database as _db
-        _db.configure(config.database_url, debug=_settings.DEBUG)
-    else:
-        import adminfoundry.database as _db
-        _db._ensure_configured()
-
-    if config.secret_key is not None:
-        _settings.SECRET_KEY = config.secret_key
-
-    if config.user_model is not None:
-        from adminfoundry.models.protocols import validate_user_model
-        validate_user_model(config.user_model)
-        runtime.auth_provider.user_model = config.user_model
-
-    from adminfoundry.cache import make_cache
-    from adminfoundry.storage import LocalStorage
-    runtime.cache = make_cache(config.cache_backend)
-    runtime.storage = config.storage_backend if config.storage_backend is not None else LocalStorage()
-
-
-def install_exception_handlers(app: "FastAPI", runtime: "AdminRuntime") -> None:
-    from fastapi.exceptions import RequestValidationError
-    from adminfoundry.middleware.errors import validation_exception_handler
-    app.add_exception_handler(RequestValidationError, validation_exception_handler)
-
-
-def install_framework_defaults(app: "FastAPI", runtime: "AdminRuntime") -> None:
-    from adminfoundry.admin.default_admins import register_framework_defaults
-    register_framework_defaults(enable_multi_tenant=runtime.config.enable_multi_tenant)
-
-
-def install_middleware(app: "FastAPI", runtime: "AdminRuntime") -> None:
-    # FastAPI stacks middleware in reverse — first added is innermost (closest to handler).
-    from adminfoundry.middleware.errors import UnhandledExceptionMiddleware
-    from adminfoundry.middleware.security_headers import SecurityHeadersMiddleware
-    from adminfoundry.middleware.rate_limit import RateLimitMiddleware
-    from adminfoundry.middleware.logging import RequestLoggingMiddleware
-    config = runtime.config
-
-    app.add_middleware(UnhandledExceptionMiddleware)
-    app.add_middleware(SecurityHeadersMiddleware)
+    Starlette runs middlewares as a stack: the LAST one added runs FIRST
+    on the request path. We want request_id available everywhere, so it
+    must be the outermost middleware (added last).
+    """
+    # Inner-most: tenant resolution (depends on request body / headers).
     if config.enable_multi_tenant:
         from adminfoundry.tenancy.middleware import TenantMiddleware
+
         app.add_middleware(TenantMiddleware)
-    app.add_middleware(RateLimitMiddleware)
-    app.add_middleware(RequestLoggingMiddleware)
+
+    # CORS only if origins are configured. Validate already rejected the
+    # unsafe ``["*"]`` + credentials=True combination.
+    if config.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(config.cors_origins),
+            allow_credentials=config.cors_allow_credentials,
+            allow_methods=list(config.cors_allow_methods),
+            allow_headers=list(config.cors_allow_headers),
+        )
+
+    if config.security_headers_enabled:
+        app.add_middleware(SecurityHeadersMiddleware)
+
+    # Access log sits just inside RequestIDMiddleware so its log records
+    # already see request.state.request_id, but it still wraps everything
+    # else (security headers, CORS, tenant resolution, handler) for
+    # accurate duration measurement.
+    app.add_middleware(AccessLogMiddleware)
+
+    # Outer-most: request ID. Runs first on the request path, so
+    # downstream middlewares + handlers can read request.state.request_id.
+    app.add_middleware(RequestIDMiddleware)
 
 
-def install_core_routers(app: "FastAPI", runtime: "AdminRuntime") -> None:
-    from adminfoundry.routers import health, users, roles
-    app.include_router(health.router)
-    app.include_router(users.router)
-    app.include_router(roles.router)
-    if runtime.config.include_auth_routes:
-        from adminfoundry.routers import auth
-        app.include_router(auth.router)
-    if runtime.config.enable_multi_tenant:
-        from adminfoundry.routers import tenants
-        app.include_router(tenants.router)
+def install_routes(
+    app: FastAPI,
+    config: CoreAdminConfig,
+) -> None:
+    # Liveness + readiness probes — no auth, no prefix, no tags so they
+    # don't pollute the OpenAPI schema.
+    app.include_router(health_router)
 
+    app.include_router(
+        auth_router,
+        prefix=config.auth_api_prefix,
+        tags=["auth"],
+    )
 
-def install_admin_api(app: "FastAPI", runtime: "AdminRuntime") -> None:
-    from adminfoundry.admin.router import router as admin_router
-    app.include_router(admin_router)
+    app.include_router(
+        contract_router,
+        prefix=config.admin_api_prefix,
+        tags=["admin-contract"],
+    )
 
-
-def install_extensions(app: "FastAPI", runtime: "AdminRuntime") -> None:
-    """Register extensions on the per-app runtime."""
-    from adminfoundry.admin.dashboard.builtins import DEFAULT_WIDGETS
-    from adminfoundry.admin.registry import admin_site as _admin_site
-    config = runtime.config
-
-    if config.dashboard_widgets is None:
-        base = list(DEFAULT_WIDGETS)
-    elif config.dashboard_widgets_mode == "replace":
-        base = list(config.dashboard_widgets)
-    else:
-        base = list(DEFAULT_WIDGETS) + list(config.dashboard_widgets)
-    runtime.dashboard_registry.reset(base=base)
-
-    for ext in config.extensions:
-        runtime.extension_registry.register(ext)
-        ext.get_models()  # import side-effect registers extension tables with Base.metadata
-        for ma in ext.get_admin_registrations():
-            _admin_site.register(ma)
-        for ext_router in ext.get_routers():
-            app.include_router(ext_router)
-        for w in ext.get_dashboard_widgets():
-            runtime.dashboard_registry.register(w)
-        ext.on_startup(app, runtime)
-
-
-def install_builtin_ui(app: "FastAPI", runtime: "AdminRuntime") -> None:
-    from adminfoundry.routers import admin_ui as _admin_ui_module
-    from adminfoundry.settings import settings as _settings
-    config = runtime.config
-
-    _admin_ui_module._locale_defaults = {
-        "language": config.default_language,
-        "date_format": config.default_date_format,
-        "date_pattern": config.default_date_pattern,
-        "show_timezone": config.default_show_timezone,
-    }
-    _admin_ui_module._extra_i18n = config.extra_i18n
+    # Superadmin-only root routes — never use tenant middleware /
+    # TenantAuthContext; require_superadmin rejects impersonation tokens.
+    app.include_router(
+        root_router,
+        prefix=config.root_api_prefix,
+        tags=["root"],
+    )
 
     if config.enable_builtin_ui:
-        from adminfoundry.routers.admin_ui import router as admin_ui_router, get_static_app
-        ui_path = _settings.ADMIN_UI_PATH
-        app.mount(f"{ui_path}/static", get_static_app(), name="admin-static")
-        app.include_router(admin_ui_router, prefix=ui_path)
+        from fastapi.staticfiles import StaticFiles
 
+        from adminfoundry.ui import STATIC_DIR
+        from adminfoundry.ui import router as ui_router
 
-def install_audit(app: "FastAPI", runtime: "AdminRuntime") -> None:
-    from adminfoundry.routers.audit import router as audit_router
-    app.include_router(audit_router)
-    # Audit middleware is always active — core infrastructure, not optional
-    from adminfoundry.middleware.audit import AuditMiddleware
-    app.add_middleware(AuditMiddleware)
+        # Mount static BEFORE including the UI router so requests to
+        # /<ui_path>/static/* are not swallowed by the /{resource} catch-all.
+        app.mount(
+            f"{config.admin_ui_path}/static",
+            StaticFiles(directory=str(STATIC_DIR / "admin")),
+            name="adminfoundry-static",
+        )
+        app.include_router(
+            ui_router,
+            prefix=config.admin_ui_path,
+            tags=["admin-ui"],
+        )
+
+    # Actions before CRUD so /{resource}/_actions/{action} is matched first.
+    app.include_router(
+        actions_router,
+        prefix=config.admin_api_prefix,
+        tags=["admin-actions"],
+    )
+
+    # Dynamic CRUD routes last.
+    app.include_router(
+        crud_router,
+        prefix=config.admin_api_prefix,
+        tags=["admin-crud"],
+    )

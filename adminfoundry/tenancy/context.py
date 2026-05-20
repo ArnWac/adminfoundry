@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from adminfoundry.models.tenant import Tenant
     from adminfoundry.models.tenant_membership import TenantMembership
-    from adminfoundry.tenancy.tenant_models import TenantRole
+    from adminfoundry.models.tenant_rbac import TenantRole
 
 
 @dataclass
@@ -18,6 +18,7 @@ class TenantContext:
     middleware/tenant.py._deserialize().  All call sites that read attributes
     from request.state.tenant are satisfied by this type.
     """
+
     id: uuid.UUID
     slug: str
     name: str
@@ -31,7 +32,7 @@ class TenantContext:
     is_superadmin_context: bool = False
 
     @classmethod
-    def from_orm(cls, tenant: "Tenant") -> "TenantContext":
+    def from_orm(cls, tenant: Tenant) -> TenantContext:
         return cls(
             id=tenant.id,
             slug=tenant.slug,
@@ -46,7 +47,7 @@ class TenantContext:
         )
 
     @classmethod
-    def from_dict(cls, data: dict) -> "TenantContext":
+    def from_dict(cls, data: dict) -> TenantContext:
         return cls(
             id=uuid.UUID(data["id"]),
             slug=data["slug"],
@@ -83,13 +84,15 @@ class TenantAuthContext:
     None of the role data touches public.roles or User.roles.
     """
 
-    tenant: "TenantContext"
-    membership: "TenantMembership"
-    roles: "list[TenantRole]"
+    tenant: TenantContext
+    membership: TenantMembership
+    roles: list[TenantRole]
     permission_keys: set[str]
 
     def has_permission(self, key: str) -> bool:
-        return key in self.permission_keys
+        from adminfoundry.authz.permissions import has_permission as _matches
+
+        return _matches(self.permission_keys, key)
 
     def has_role(self, name: str) -> bool:
         return any(r.name == name for r in self.roles)

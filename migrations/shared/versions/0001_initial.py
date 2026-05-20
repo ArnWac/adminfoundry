@@ -1,14 +1,32 @@
-"""initial
+"""initial public schema
 
-Revision ID: 0001_initial
+Revision ID: 0001_initial_public
 Revises:
-Create Date: 2026-05-06
+Create Date: 2026-05-20
 
+Creates the v1 global/public tables:
+
+  users
+  tenants
+  tenant_memberships
+  permission_catalog
+  audit_logs
+  impersonation_logs
+
+Tables are created without a schema qualifier so they land in the default
+search_path. On PostgreSQL deployments that's ``public``; on SQLite
+(testing) there are no schemas.
 """
-from alembic import op
-import sqlalchemy as sa
+from __future__ import annotations
 
-revision = "0001_initial"
+import sqlalchemy as sa
+from alembic import op
+
+from adminfoundry.models.base import GUID
+
+
+# Alembic identifiers
+revision = "0001_initial_public"
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -16,151 +34,223 @@ depends_on = None
 
 def upgrade() -> None:
     op.create_table(
-        "tenants",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("name", sa.String(255), nullable=False),
-        sa.Column("slug", sa.String(63), nullable=False, unique=True),
-        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
-    )
-    op.create_index("ix_tenants_slug", "tenants", ["slug"])
-
-    op.create_table(
         "users",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("email", sa.String(255), nullable=False, unique=True),
+        sa.Column("id", GUID(), primary_key=True, nullable=False),
+        sa.Column("email", sa.String(255), nullable=False),
         sa.Column("hashed_password", sa.String(255), nullable=False),
         sa.Column("full_name", sa.String(255), nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("is_superadmin", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.Column("token_version", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column(
-            "tenant_id",
-            sa.String(36),
-            sa.ForeignKey("tenants.id", ondelete="SET NULL"),
-            nullable=True,
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
         ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.UniqueConstraint("email", name="uq_users_email"),
     )
-    op.create_index("ix_users_email", "users", ["email"])
-    op.create_index("ix_users_tenant_id", "users", ["tenant_id"])
+    op.create_index("ix_users_email", "users", ["email"], unique=True)
 
     op.create_table(
-        "roles",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("name", sa.String(100), nullable=False, unique=True),
+        "tenants",
+        sa.Column("id", GUID(), primary_key=True, nullable=False),
+        sa.Column("name", sa.String(255), nullable=False),
+        sa.Column("slug", sa.String(63), nullable=False),
+        sa.Column("schema_name", sa.String(63), nullable=False),
+        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
+        sa.Column("timezone", sa.String(64), nullable=True),
+        sa.Column("language", sa.String(16), nullable=True),
+        sa.Column("date_format", sa.String(16), nullable=True),
+        sa.Column("date_pattern", sa.String(64), nullable=True),
+        sa.Column("allowed_cidrs", sa.Text(), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.UniqueConstraint("slug", name="uq_tenants_slug"),
+        sa.UniqueConstraint("schema_name", name="uq_tenants_schema_name"),
     )
-    op.create_index("ix_roles_name", "roles", ["name"])
+    op.create_index("ix_tenants_slug", "tenants", ["slug"], unique=True)
+    op.create_index("ix_tenants_schema_name", "tenants", ["schema_name"], unique=True)
 
     op.create_table(
-        "user_roles",
+        "tenant_memberships",
+        sa.Column("id", GUID(), primary_key=True, nullable=False),
+        sa.Column("user_id", GUID(), nullable=False),
+        sa.Column("tenant_id", GUID(), nullable=False),
+        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
+        sa.Column("timezone", sa.String(64), nullable=True),
+        sa.Column("language", sa.String(16), nullable=True),
         sa.Column(
-            "user_id",
-            sa.String(36),
-            sa.ForeignKey("users.id", ondelete="CASCADE"),
-            primary_key=True,
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.Column(
-            "role_id",
-            sa.String(36),
-            sa.ForeignKey("roles.id", ondelete="CASCADE"),
-            primary_key=True,
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
         ),
+        sa.ForeignKeyConstraint(
+            ["user_id"], ["users.id"], ondelete="CASCADE",
+            name="fk_tenant_memberships_user_id",
+        ),
+        sa.ForeignKeyConstraint(
+            ["tenant_id"], ["tenants.id"], ondelete="CASCADE",
+            name="fk_tenant_memberships_tenant_id",
+        ),
+        sa.UniqueConstraint(
+            "user_id", "tenant_id", name="uq_membership_user_tenant",
+        ),
+    )
+    op.create_index(
+        "ix_tenant_memberships_user_id", "tenant_memberships", ["user_id"]
+    )
+    op.create_index(
+        "ix_tenant_memberships_tenant_id", "tenant_memberships", ["tenant_id"]
+    )
+    op.create_index(
+        "ix_membership_tenant_active",
+        "tenant_memberships",
+        ["tenant_id", "is_active"],
+    )
+
+    op.create_table(
+        "permission_catalog",
+        sa.Column("id", GUID(), primary_key=True, nullable=False),
+        sa.Column("key", sa.String(200), nullable=False),
+        sa.Column("description", sa.String(500), nullable=True),
+        sa.Column("category", sa.String(100), nullable=True),
+        sa.Column("source", sa.String(200), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.UniqueConstraint("key", name="uq_permission_catalog_key"),
+    )
+    op.create_index(
+        "ix_permission_catalog_key", "permission_catalog", ["key"], unique=True
     )
 
     op.create_table(
         "audit_logs",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("id", GUID(), primary_key=True, nullable=False),
         sa.Column("method", sa.String(10), nullable=False),
         sa.Column("path", sa.String(500), nullable=False),
         sa.Column("status_code", sa.Integer(), nullable=False),
-        sa.Column("user_id", sa.String(36), nullable=True),
-        sa.Column("tenant_id", sa.String(36), nullable=True),
-        sa.Column("action", sa.String(50), nullable=True),
-        sa.Column("object_id", sa.String(100), nullable=True),
-        sa.Column("actor", sa.String(255), nullable=True),
+        sa.Column("actor_user_id", GUID(), nullable=True),
+        sa.Column("tenant_id", GUID(), nullable=True),
+        sa.Column("resource", sa.String(100), nullable=True),
+        sa.Column("record_id", sa.String(100), nullable=True),
+        sa.Column("action", sa.String(100), nullable=True),
+        sa.Column("actor_label", sa.String(255), nullable=True),
         sa.Column("changes", sa.JSON(), nullable=True),
+        sa.Column("ip_address", sa.String(45), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
     )
+    op.create_index("ix_audit_logs_actor_user_id", "audit_logs", ["actor_user_id"])
+    op.create_index("ix_audit_logs_tenant_id", "audit_logs", ["tenant_id"])
+    op.create_index("ix_audit_logs_resource", "audit_logs", ["resource"])
+    op.create_index("ix_audit_logs_created_at", "audit_logs", ["created_at"])
+    op.create_index(
+        "ix_audit_logs_actor_user_id_created_at",
+        "audit_logs",
+        ["actor_user_id", "created_at"],
+    )
+    op.create_index(
+        "ix_audit_logs_tenant_id_created_at",
+        "audit_logs",
+        ["tenant_id", "created_at"],
+    )
+    op.create_index(
+        "ix_audit_logs_action_created_at",
+        "audit_logs",
+        ["action", "created_at"],
+    )
+    op.create_index("ix_audit_logs_record_id", "audit_logs", ["record_id"])
 
     op.create_table(
         "impersonation_logs",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("superadmin_id", sa.String(36), nullable=False),
-        sa.Column("target_user_id", sa.String(36), nullable=False),
-        sa.Column("tenant_id", sa.String(36), nullable=True),
-        sa.Column("jti", sa.String(100), nullable=False, unique=True),
+        sa.Column("id", GUID(), primary_key=True, nullable=False),
+        sa.Column("superadmin_id", GUID(), nullable=False),
+        sa.Column("target_user_id", GUID(), nullable=False),
+        sa.Column("tenant_id", GUID(), nullable=True),
+        sa.Column("jti", sa.String(100), nullable=False),
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.UniqueConstraint("jti", name="uq_impersonation_logs_jti"),
     )
-    op.create_index("ix_impersonation_logs_jti", "impersonation_logs", ["jti"])
-
-    op.create_table(
-        "change_requests",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("model_name", sa.String(100), nullable=False),
-        sa.Column("object_id", sa.String(100), nullable=True),
-        sa.Column("operation", sa.String(20), nullable=False),
-        sa.Column("requester_id", sa.String(36), nullable=False),
-        sa.Column("reviewer_id", sa.String(36), nullable=True),
-        sa.Column("status", sa.String(20), nullable=False),
-        sa.Column("reason", sa.Text(), nullable=True),
-        sa.Column("rejection_reason", sa.Text(), nullable=True),
-        sa.Column("proposed_data", sa.Text(), nullable=True),
-        sa.Column("original_data", sa.Text(), nullable=True),
-        sa.Column("tenant_id", sa.String(36), nullable=True),
-        sa.Column("audit_log_id", sa.String(36), nullable=True),
+    op.create_index(
+        "ix_impersonation_logs_superadmin_id",
+        "impersonation_logs",
+        ["superadmin_id"],
     )
-
-    op.create_table(
-        "jobs",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("status", sa.String(20), nullable=False),
-        sa.Column("job_type", sa.String(50), nullable=False),
-        sa.Column("model_name", sa.String(100), nullable=True),
-        sa.Column("action_name", sa.String(100), nullable=True),
-        sa.Column("initiator_id", sa.String(36), nullable=False),
-        sa.Column("tenant_id", sa.String(36), nullable=True),
-        sa.Column("audit_log_id", sa.String(36), nullable=True),
-        sa.Column("progress", sa.Integer(), nullable=True),
-        sa.Column("result_summary", sa.Text(), nullable=True),
-        sa.Column("failure_summary", sa.Text(), nullable=True),
-        sa.Column("idempotency_key", sa.String(255), nullable=True),
-        sa.Column("input_data", sa.Text(), nullable=True),
-        sa.Column("output_data", sa.Text(), nullable=True),
-        sa.UniqueConstraint("idempotency_key", name="uq_jobs_idempotency_key"),
+    op.create_index(
+        "ix_impersonation_logs_target_user_id",
+        "impersonation_logs",
+        ["target_user_id"],
     )
-
-    op.create_table(
-        "revoked_tokens",
-        sa.Column("jti", sa.String(36), primary_key=True),
-        sa.Column("exp", sa.DateTime(timezone=True), nullable=False),
+    op.create_index(
+        "ix_impersonation_logs_tenant_id",
+        "impersonation_logs",
+        ["tenant_id"],
     )
-
-    op.create_table(
-        "rate_limit_requests",
-        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("key", sa.String(255), nullable=False),
-        sa.Column("ts", sa.Float(), nullable=False),
+    op.create_index(
+        "ix_impersonation_logs_jti", "impersonation_logs", ["jti"], unique=True
     )
-    op.create_index("ix_rate_limit_requests_key", "rate_limit_requests", ["key"])
 
 
 def downgrade() -> None:
-    op.drop_table("rate_limit_requests")
-    op.drop_table("revoked_tokens")
-    op.drop_table("jobs")
-    op.drop_table("change_requests")
     op.drop_table("impersonation_logs")
     op.drop_table("audit_logs")
-    op.drop_table("user_roles")
-    op.drop_table("roles")
-    op.drop_table("users")
+    op.drop_table("permission_catalog")
+    op.drop_table("tenant_memberships")
     op.drop_table("tenants")
+    op.drop_table("users")

@@ -1,90 +1,99 @@
+# adminfoundry/models/base.py
+
+from __future__ import annotations
+
 import uuid
-from datetime import datetime, timezone
-from sqlalchemy import DateTime, String
+from datetime import datetime
+
+from sqlalchemy import DateTime, MetaData, func
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy.types import TypeDecorator
-
-
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+from sqlalchemy.types import CHAR, TypeDecorator
 
 
 class GUID(TypeDecorator):
-    """UUID that stores as native UUID on PostgreSQL, string on SQLite."""
+    """Platform-independent UUID type.
 
-    impl = String(36)
+    Uses PostgreSQL UUID when available, otherwise stores UUID as CHAR(32).
+    """
+
+    impl = CHAR
     cache_ok = True
 
     def load_dialect_impl(self, dialect):
         if dialect.name == "postgresql":
-            from sqlalchemy.dialects.postgresql import UUID
-
-            return dialect.type_descriptor(UUID(as_uuid=True))
-        return dialect.type_descriptor(String(36))
+            return dialect.type_descriptor(PG_UUID(as_uuid=True))
+        return dialect.type_descriptor(CHAR(32))
 
     def process_bind_param(self, value, dialect):
         if value is None:
-            return value
+            return None
+        if not isinstance(value, uuid.UUID):
+            value = uuid.UUID(str(value))
         if dialect.name == "postgresql":
-            return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
-        return str(value)
+            return value
+        return value.hex
 
     def process_result_value(self, value, dialect):
         if value is None:
+            return None
+        if isinstance(value, uuid.UUID):
             return value
-        return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
+        return uuid.UUID(str(value))
 
 
-class Base(DeclarativeBase):
-    """Global (public-schema) declarative base. All shared models inherit from this."""
+def make_global_metadata(schema: str | None = "public") -> MetaData:
+    """Create metadata for global/public tables."""
+    return MetaData(schema=schema)
+
+
+def make_tenant_metadata() -> MetaData:
+    """Create metadata for tenant-local tables.
+
+    Tenant-local tables intentionally do not define a fixed schema.
+    They are created/queried inside the active tenant schema.
+    """
+    return MetaData()
+
+
+GLOBAL_METADATA = make_global_metadata("public")
+TENANT_METADATA = make_tenant_metadata()
+
+
+class GlobalBase(DeclarativeBase):
+    metadata = GLOBAL_METADATA
 
 
 class TenantBase(DeclarativeBase):
-    """Tenant-schema declarative base. Tenant-local models inherit from this.
-
-    TenantBase.metadata drives migrations/tenant/ and is separate from
-    Base.metadata so that shared and tenant migrations never overlap.
-    """
+    metadata = TENANT_METADATA
 
 
-class TimestampedBase(Base):
+class IdMixin:
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+
+class TimestampMixin:
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class GlobalModel(IdMixin, TimestampMixin, GlobalBase):
     __abstract__ = True
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        GUID, primary_key=True, default=uuid.uuid4
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
-    )
 
-
-class TenantTimestampedBase(TenantBase):
-    """TenantBase equivalent of TimestampedBase."""
-
+class TenantModel(IdMixin, TimestampMixin, TenantBase):
     __abstract__ = True
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        GUID, primary_key=True, default=uuid.uuid4
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
-    )
-
-
-class SoftDeleteMixin:
-    """Opt-in soft-delete column. Use with ModelAdmin(soft_delete=True).
-
-    Records are never removed from the DB; DELETE sets deleted_at instead.
-    All list/detail queries auto-exclude soft-deleted rows unless ?trash=1.
-    Hard permanent delete is available via DELETE /{model}/{id}/hard (superadmin).
-    """
-
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, default=None, index=True
-    )

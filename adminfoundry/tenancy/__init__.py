@@ -1,15 +1,26 @@
-from adminfoundry.tenancy.context import TenantContext
-from adminfoundry.tenancy.middleware import TenantMiddleware
-from adminfoundry.tenancy.resolver import resolve_tenant, clear_tenant_cache
-from adminfoundry.tenancy.schema_strategy import get_or_create_tenant_engine, get_tenant_session
-from adminfoundry.tenancy.strategy import TenantStrategy
+from adminfoundry.tenancy.bootstrap import (
+    assign_owner_membership,
+    bootstrap_tenant,
+    create_tenant_record,
+    provision_tenant_schema,
+    seed_default_tenant_roles,
+)
+from adminfoundry.tenancy.context import TenantAuthContext, TenantContext
+from adminfoundry.tenancy.schema_names import (
+    InvalidSchemaNameError,
+    make_tenant_schema_name,
+    validate_schema_name,
+)
 
 __all__ = [
+    "InvalidSchemaNameError",
+    "TenantAuthContext",
     "TenantContext",
-    "TenantMiddleware",
-    "TenantStrategy",
-    "resolve_tenant",
-    "clear_tenant_cache",
-    "get_or_create_tenant_engine",
-    "get_tenant_session",
+    "assign_owner_membership",
+    "bootstrap_tenant",
+    "create_tenant_record",
+    "make_tenant_schema_name",
+    "provision_tenant_schema",
+    "seed_default_tenant_roles",
+    "validate_schema_name",
 ]

@@ -1,31 +1,44 @@
-"""Tenant migration environment.
+"""Alembic environment for tenant-local schemas.
 
-Run against a specific tenant schema by passing --x-schema:
+Run against a specific tenant schema by passing -x schema=<name>:
 
     alembic -c alembic_tenant.ini -x schema=tenant_acme upgrade head
 
-When --x-schema is supplied the migration connection sets search_path so that
-DDL runs inside that tenant schema.  Without it, migrations run in the default
-search_path (useful for generating SQL scripts).
+Reads DATABASE_URL from the environment. No dependency on legacy settings.
 """
+
 import asyncio
+import os
 from logging.config import fileConfig
+
+from alembic import context
 from sqlalchemy import pool, text
 from sqlalchemy.ext.asyncio import async_engine_from_config
-from alembic import context
-from adminfoundry.settings import settings
+
+import adminfoundry.models.tenant_rbac  # noqa: F401 — registers TenantBase tables
 from adminfoundry.models.base import TenantBase
-import adminfoundry.tenancy.tenant_models  # noqa: F401 — register TenantBase tables
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+
+_database_url = (
+    os.environ.get("ADMINFOUNDRY_DATABASE_URL")
+    or os.environ.get("DATABASE_URL")
+    or config.get_main_option("sqlalchemy.url")
+)
+if not _database_url:
+    raise RuntimeError(
+        "Set ADMINFOUNDRY_DATABASE_URL (or DATABASE_URL), or set "
+        "'sqlalchemy.url' on the alembic Config before running."
+    )
+config.set_main_option("sqlalchemy.url", _database_url)
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False so loggers created before alembic
+    # was invoked (e.g. adminfoundry.access) stay enabled.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = TenantBase.metadata
 
-# Optional schema override passed via -x schema=tenant_acme
 _schema = context.get_x_argument(as_dictionary=True).get("schema")
 
 
@@ -41,7 +54,7 @@ def run_migrations_offline() -> None:
 
 def do_run_migrations(connection):
     if _schema:
-        connection.execute(text(f"SET search_path TO {_schema}, public"))
+        connection.execute(text(f'SET search_path TO "{_schema}", public'))
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
         context.run_migrations()

@@ -1,10 +1,12 @@
-"""Admin registrations for the single-tenant blog example.
+"""Admin registration for the single-tenant blog example.
 
-Framework models (User, AuditLog, etc.) are registered automatically by
-create_admin() with sensible defaults.  Only the app-specific Post model
-needs an explicit registration here.
+Single-tenant mode (enable_multi_tenant=False) does not install the tenant
+RBAC builtins, so the registry only contains what we register here.
 """
-from adminfoundry import ModelAdmin, admin_site
+
+from __future__ import annotations
+
+from adminfoundry import AdminRegistry, ModelAdmin
 from adminfoundry.actions import BulkDeleteAction
 
 from examples.basic_single.models import Post
@@ -19,31 +21,25 @@ def _read_time(obj: Post) -> str:
     return f"{minutes} min"
 
 
-def _excerpt(obj: Post) -> str:
-    body = (obj.content or "").strip()
-    return body[:100] + ("..." if len(body) > 100 else "")
-
-
 class PostAdmin(ModelAdmin):
-    model           = Post
-    label           = "Post"
-    label_plural    = "Posts"
-    description     = "Blog posts"
-    list_display    = ["title", "author", "word_count", "read_time", "published", "created_at"]
-    search_fields   = ["title", "content", "author"]
-    filter_fields   = ["published"]
-    ordering        = ["-created_at"]
+    model = Post
+    label = "Post"
+    label_plural = "Posts"
+    description = "Blog posts"
+
+    list_display = ["title", "author", "word_count", "read_time", "published", "created_at"]
+    search_fields = ["title", "content", "author"]
+    ordering = ["-created_at"]
     readonly_fields = ["id", "created_at", "updated_at"]
-    actions         = [BulkDeleteAction()]
-    fieldsets = [
-        ("Content",    ["title", "content"]),
-        ("Publishing", ["author", "published"]),
-    ]
-    computed_fields = {
+
+    actions = [BulkDeleteAction()]
+
+    # Calculated (read-only) columns derived from the row at serialization time.
+    calculated_fields = {
         "word_count": _word_count,
-        "read_time":  _read_time,
-        "excerpt":    _excerpt,
+        "read_time": _read_time,
     }
 
 
-admin_site.register(PostAdmin())
+def register(registry: AdminRegistry) -> None:
+    registry.register(PostAdmin)

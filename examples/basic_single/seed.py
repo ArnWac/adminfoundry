@@ -1,28 +1,29 @@
 """Seed the single-tenant demo: one superadmin. Idempotent."""
-import asyncio
+from __future__ import annotations
 
-import examples.basic_single.database  # noqa: F401 — set DATABASE_URL
+import asyncio
+import os
 
 from sqlalchemy import select
 
-import adminfoundry.database as _db
-from adminfoundry.auth import hash_password
+from adminfoundry.auth.password import hash_password
+from adminfoundry.db.session import DatabaseManager
 from adminfoundry.models import User
-from adminfoundry.models.base import Base
+from adminfoundry.models.base import GlobalModel
 
-# Trigger admin registrations so all model tables are imported.
-import examples.basic_single.admin_config  # noqa: F401
+# Ensure the app-local Post table is registered in GlobalModel.metadata.
+import examples.basic_single.models  # noqa: F401
 
 
 ADMIN_EMAIL = "admin@example.com"
 ADMIN_PASSWORD = "admin123"  # demo only
 
 
-async def seed() -> None:
-    async with _db.engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+async def seed(db: DatabaseManager) -> None:
+    async with db.engine.begin() as conn:
+        await conn.run_sync(GlobalModel.metadata.create_all)
 
-    async with _db.AsyncSessionLocal() as session:
+    async with db.session() as session:
         existing = (await session.execute(
             select(User).where(User.email == ADMIN_EMAIL)
         )).scalars().first()
@@ -38,18 +39,27 @@ async def seed() -> None:
 
 
 def print_banner() -> None:
-    print("""
+    print(f"""
 adminfoundry demo ready
 
 Admin UI:
-  http://127.0.0.1:8000/admin-ui
+  http://127.0.0.1:8000/admin
 
 Global superadmin (demo only — do not use in production):
-  email:    {email}
-  password: {password}
-""".format(email=ADMIN_EMAIL, password=ADMIN_PASSWORD))
+  email:    {ADMIN_EMAIL}
+  password: {ADMIN_PASSWORD}
+""")
+
+
+async def _run_standalone() -> None:
+    url = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./basic_single.db")
+    db = DatabaseManager(url)
+    try:
+        await seed(db)
+    finally:
+        await db.dispose()
 
 
 if __name__ == "__main__":
-    asyncio.run(seed())
+    asyncio.run(_run_standalone())
     print_banner()

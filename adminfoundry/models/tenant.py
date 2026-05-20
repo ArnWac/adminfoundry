@@ -1,38 +1,60 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
-from sqlalchemy import String, Boolean, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from adminfoundry.models.base import TimestampedBase
+
+from sqlalchemy import Boolean, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
+
+from adminfoundry.models.base import GlobalModel
+from adminfoundry.security.validation import validate_schema_name
 
 if TYPE_CHECKING:
     from adminfoundry.models.tenant_membership import TenantMembership
 
 
-class Tenant(TimestampedBase):
+class Tenant(GlobalModel):
     __tablename__ = "tenants"
 
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    slug: Mapped[str] = mapped_column(String(63), unique=True, nullable=False, index=True)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
 
-    # Locale — serve as the middle tier between app defaults and user preferences.
-    # All nullable: None means "inherit from app default".
-    # timezone: IANA name, e.g. "Europe/Berlin", "America/New_York", "UTC"
+    slug: Mapped[str] = mapped_column(
+        String(63),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    schema_name: Mapped[str] = mapped_column(
+        String(63),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+    )
+
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # language: BCP 47 tag, e.g. "de", "en", "fr", "pt-BR"
     language: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    # date_format: "locale" | "iso" | "eu" | "us" | "custom"
     date_format: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    # date_pattern: strftime pattern used when date_format = "custom"
     date_pattern: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # IP allowlist: JSON array of CIDR strings, e.g. ["10.0.0.0/8", "203.0.113.5/32"].
-    # Null means unrestricted. Enforced in TenantMiddleware.
+
+    # Keep only if you still want tenant IP allowlist in middleware.
+    # Otherwise remove for now.
     allowed_cidrs: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     memberships: Mapped[list[TenantMembership]] = relationship(
-        "TenantMembership", back_populates="tenant", cascade="all, delete-orphan"
+        "TenantMembership",
+        back_populates="tenant",
+        cascade="all, delete-orphan",
     )
 
-    @property
-    def schema_name(self) -> str:
-        return f"tenant_{self.slug}"
+    @validates("schema_name")
+    def _validate_schema_name(self, key: str, value: str) -> str:
+        return validate_schema_name(value)

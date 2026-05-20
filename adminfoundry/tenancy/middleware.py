@@ -1,11 +1,17 @@
-"""Slim TenantMiddleware that delegates resolution to resolver.py."""
+"""Slim TenantMiddleware that delegates resolution to resolver.py.
+
+Error responses go through the consistent envelope helper so a
+tenant-resolution failure looks exactly like every other API error from
+the client's point of view.
+"""
+
 import ipaddress
 import json
 
-from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
+from adminfoundry.core.errors import FORBIDDEN, NOT_FOUND, error_response
 from adminfoundry.tenancy.resolver import _extract_slug, resolve_tenant
 
 
@@ -19,35 +25,39 @@ class TenantMiddleware(BaseHTTPMiddleware):
         ctx = await resolve_tenant(request)
 
         if ctx is None:
-            return JSONResponse(
+            return error_response(
+                request,
                 status_code=404,
-                content={"detail": f"Tenant '{slug}' not found"},
+                code=NOT_FOUND,
+                message=f"Tenant {slug!r} not found.",
             )
         if not ctx.is_active:
-            return JSONResponse(
+            return error_response(
+                request,
                 status_code=403,
-                content={"detail": "Tenant is disabled"},
+                code=FORBIDDEN,
+                message=f"Tenant {slug!r} is disabled.",
             )
         if ctx.allowed_cidrs:
             client_ip = request.client.host if request.client else None
             if not client_ip:
-                return JSONResponse(
+                return error_response(
+                    request,
                     status_code=403,
-                    content={"detail": "Access denied: client IP could not be determined"},
+                    code=FORBIDDEN,
+                    message="Access denied: client IP could not be determined.",
                 )
             try:
                 cidrs = json.loads(ctx.allowed_cidrs)
             except (ValueError, TypeError):
                 cidrs = [c.strip() for c in ctx.allowed_cidrs.splitlines() if c.strip()]
             addr = ipaddress.ip_address(client_ip)
-            if not any(
-                addr in ipaddress.ip_network(c, strict=False)
-                for c in cidrs
-                if c
-            ):
-                return JSONResponse(
+            if not any(addr in ipaddress.ip_network(c, strict=False) for c in cidrs if c):
+                return error_response(
+                    request,
                     status_code=403,
-                    content={"detail": "Access denied: IP not in tenant allowlist"},
+                    code=FORBIDDEN,
+                    message="Access denied: IP not in tenant allowlist.",
                 )
 
         request.state.tenant = ctx

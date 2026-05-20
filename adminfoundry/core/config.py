@@ -1,168 +1,386 @@
-"""Typed configuration model for the adminfoundry framework.
+# adminfoundry/core/config.py
 
-Runtime code should consume CoreAdminConfig, not raw environment variables.
-Use CoreAdminConfig.from_settings(settings) to build from the env-backed Settings object.
-"""
 from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    from adminfoundry.auth_provider import AuthProvider
+import logging
+import os
+from dataclasses import dataclass, fields, replace
+from typing import Literal, TypeVar, cast, get_args
+
+TenantResolution = Literal["header", "subdomain"]
+DateFormat = Literal["locale", "iso", "eu", "us", "custom"]
+Environment = Literal["development", "test", "production"]
+
+T = TypeVar("T", bound=str)
+
+MIN_PRODUCTION_SECRET_LENGTH = 32
 
 
-@dataclass
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+
+    if value is None:
+        return default
+
+    normalized = value.strip().lower()
+
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+
+    raise ValueError(
+        f"Invalid boolean value for {name}: {value!r}. "
+        "Expected one of: true/false, 1/0, yes/no, on/off."
+    )
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+
+    if value is None:
+        return default
+
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError(f"Invalid integer value for {name}: {value!r}.") from exc
+
+
+def _env_required(name: str) -> str:
+    value = os.getenv(name)
+
+    if value is None or not value.strip():
+        raise ValueError(f"Required environment variable is missing: {name}")
+
+    return value.strip()
+
+
+def _env_optional(name: str, default: str) -> str:
+    value = os.getenv(name)
+
+    if value is None:
+        return default
+
+    return value.strip()
+
+
+def _env_literal(
+    name: str,
+    default: T,
+    allowed: tuple[T, ...],
+) -> T:
+    value = cast(T, os.getenv(name, default))
+
+    if value not in allowed:
+        raise ValueError(f"Invalid value for {name}: {value!r}. Expected one of {allowed}.")
+
+    return value
+
+
+def _env_tuple(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    parts = tuple(p.strip() for p in value.split(",") if p.strip())
+    return parts
+
+
+_VALID_LOG_LEVELS = ("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET")
+
+
+@dataclass(slots=True, frozen=True)
 class CoreAdminConfig:
-    """Central typed configuration for an adminfoundry installation.
+    database_url: str
+    secret_key: str
 
-    Defaults produce a minimal core installation — optional extensions are off.
-    Disabled features do not mount routers, expose metadata, or import heavy deps.
+    app_title: str = "adminfoundry"
+    debug: bool = False
 
-    Package-user example (no env vars required)::
+    auth_api_prefix: str = "/api/v1/auth"
+    admin_api_prefix: str = "/api/v1/admin"
+    root_api_prefix: str = "/api/v1/root"
+    admin_ui_path: str = "/admin"
 
-        config = CoreAdminConfig(
-            database_url="sqlite+aiosqlite:///./app.db",
-            secret_key="my-secret",
-            enable_multi_tenant=False,
-        )
-        app = create_admin(config=config, title="My Admin")
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60
+    password_min_length: int = 8
 
-    Env-backed convenience::
-
-        config = CoreAdminConfig.from_env(enable_multi_tenant=True, tenant_resolution="subdomain")
-        app = create_admin(config=config, title="My SaaS Admin")
-    """
-
-    # Database — if set, create_admin() configures the engine from this URL.
-    # When None the engine is lazily initialised from DATABASE_URL env / settings.
-    database_url: str | None = None
-    # JWT secret — if set, overrides SECRET_KEY env / settings for token signing.
-    secret_key: str | None = None
-
-    # Core features
     enable_builtin_ui: bool = True
-    enable_multi_tenant: bool = False
-    # "header" uses X-Tenant-Slug; "subdomain" extracts from the first hostname segment
-    tenant_resolution: str = "header"
+    enable_builtin_admins: bool = True
+    enable_multi_tenant: bool = True
 
-    # Locale defaults — applied as the initial value for all users who have
-    # not yet saved a personal preference. Users can override in Settings.
-    # language: BCP 47 tag, e.g. "en", "de", "fr"
+    tenant_resolution: TenantResolution = "header"
+    tenant_header_name: str = "X-Tenant-Slug"
+
     default_language: str = "en"
-    # date_format: "locale" | "iso" | "eu" | "us" | "custom"
-    default_date_format: str = "locale"
+    default_date_format: DateFormat = "locale"
     default_date_pattern: str = "%Y-%m-%d %H:%M"
     default_show_timezone: bool = False
 
-    # User-supplied extension instances (loaded in registration order)
-    extensions: list[Any] = field(default_factory=list)
+    # --- PR-4: operational baseline ---
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    db_pool_pre_ping: bool = True
 
-    # Optional custom auth provider — None uses the built-in JWT provider
-    auth_provider: AuthProvider | None = None
-    # Optional custom user model — must have id, email, is_active, is_superadmin.
-    # adminfoundry validates the model against these requirements at startup.
-    user_model: Any | None = None
-    # Set False to skip mounting built-in login/logout/refresh routes
-    include_auth_routes: bool = True
+    log_level: str = "INFO"
+    log_json: bool = False
 
-    # Cache backend URL — None uses in-process memory; "redis://..." uses Redis
-    cache_backend: str | None = None
+    cors_origins: tuple[str, ...] = ()
+    cors_allow_credentials: bool = False
+    cors_allow_methods: tuple[str, ...] = (
+        "GET",
+        "POST",
+        "PATCH",
+        "DELETE",
+        "OPTIONS",
+    )
+    cors_allow_headers: tuple[str, ...] = (
+        "Authorization",
+        "Content-Type",
+        "X-Tenant-Slug",
+    )
 
-    # Storage backend instance — None uses LocalStorage("uploads")
-    storage_backend: Any | None = None
+    security_headers_enabled: bool = True
 
-    # Dashboard widgets — None uses DEFAULT_WIDGETS (core generic widgets only).
-    # By default (mode "append"), user-supplied widgets are added after the core
-    # defaults. Set dashboard_widgets_mode="replace" to fully replace DEFAULT_WIDGETS.
-    # Widgets contributed by extensions are always appended after the base set.
-    dashboard_widgets: list[Any] | None = None
-    # "append" (default): user widgets added after DEFAULT_WIDGETS.
-    # "replace": user widgets fully replace DEFAULT_WIDGETS.
-    dashboard_widgets_mode: str = "append"
-
-    # Extra i18n strings injected into the admin UI — merged on top of built-in strings.
-    # Lets app code add/override translations without modifying the package.
-    # Structure: {"en": {"my_action_label": "My Action"}, "de": {"my_action_label": "Meine Aktion"}}
-    extra_i18n: dict = field(default_factory=dict)
+    # --- PR-10: production guards ---
+    environment: Environment = "development"
 
     @classmethod
-    def from_pyproject(cls, path: str | None = None) -> "CoreAdminConfig":
-        """Build config from [tool.adminfoundry] in pyproject.toml (Python 3.11+ tomllib)."""
-        import tomllib
-        from pathlib import Path
-
-        toml_path = Path(path) if path else Path("pyproject.toml")
-        if not toml_path.exists():
-            return cls()
-        with open(toml_path, "rb") as f:
-            data = tomllib.load(f)
-        s = data.get("tool", {}).get("adminfoundry", {})
-        return cls(
-            enable_builtin_ui=s.get("enable_builtin_ui", True),
-            enable_multi_tenant=s.get("enable_multi_tenant", False),
-            default_language=s.get("default_language", "en"),
-            default_date_format=s.get("default_date_format", "locale"),
-            default_date_pattern=s.get("default_date_pattern", "%Y-%m-%d %H:%M"),
-            default_show_timezone=s.get("default_show_timezone", False),
+    def from_env(cls, **overrides: object) -> CoreAdminConfig:
+        config = cls(
+            database_url=_env_required("ADMINFOUNDRY_DATABASE_URL"),
+            secret_key=_env_required("ADMINFOUNDRY_SECRET_KEY"),
+            app_title=_env_optional("ADMINFOUNDRY_APP_TITLE", "adminfoundry"),
+            debug=_env_bool("ADMINFOUNDRY_DEBUG", False),
+            auth_api_prefix=_env_optional(
+                "ADMINFOUNDRY_AUTH_API_PREFIX",
+                "/api/v1/auth",
+            ),
+            admin_api_prefix=_env_optional(
+                "ADMINFOUNDRY_ADMIN_API_PREFIX",
+                "/api/v1/admin",
+            ),
+            root_api_prefix=_env_optional(
+                "ADMINFOUNDRY_ROOT_API_PREFIX",
+                "/api/v1/root",
+            ),
+            admin_ui_path=_env_optional(
+                "ADMINFOUNDRY_ADMIN_UI_PATH",
+                "/admin",
+            ),
+            jwt_algorithm=_env_optional(
+                "ADMINFOUNDRY_JWT_ALGORITHM",
+                "HS256",
+            ),
+            access_token_expire_minutes=_env_int(
+                "ADMINFOUNDRY_ACCESS_TOKEN_EXPIRE_MINUTES",
+                60,
+            ),
+            password_min_length=_env_int(
+                "ADMINFOUNDRY_PASSWORD_MIN_LENGTH",
+                8,
+            ),
+            enable_builtin_ui=_env_bool(
+                "ADMINFOUNDRY_ENABLE_BUILTIN_UI",
+                True,
+            ),
+            enable_builtin_admins=_env_bool(
+                "ADMINFOUNDRY_ENABLE_BUILTIN_ADMINS",
+                True,
+            ),
+            enable_multi_tenant=_env_bool(
+                "ADMINFOUNDRY_ENABLE_MULTI_TENANT",
+                True,
+            ),
+            tenant_resolution=_env_literal(
+                "ADMINFOUNDRY_TENANT_RESOLUTION",
+                "header",
+                get_args(TenantResolution),
+            ),
+            tenant_header_name=_env_optional(
+                "ADMINFOUNDRY_TENANT_HEADER_NAME",
+                "X-Tenant-Slug",
+            ),
+            default_language=_env_optional(
+                "ADMINFOUNDRY_DEFAULT_LANGUAGE",
+                "en",
+            ),
+            default_date_format=_env_literal(
+                "ADMINFOUNDRY_DEFAULT_DATE_FORMAT",
+                "locale",
+                get_args(DateFormat),
+            ),
+            default_date_pattern=_env_optional(
+                "ADMINFOUNDRY_DEFAULT_DATE_PATTERN",
+                "%Y-%m-%d %H:%M",
+            ),
+            default_show_timezone=_env_bool(
+                "ADMINFOUNDRY_DEFAULT_SHOW_TIMEZONE",
+                False,
+            ),
+            db_pool_size=_env_int("ADMINFOUNDRY_DB_POOL_SIZE", 10),
+            db_max_overflow=_env_int("ADMINFOUNDRY_DB_MAX_OVERFLOW", 20),
+            db_pool_pre_ping=_env_bool("ADMINFOUNDRY_DB_POOL_PRE_PING", True),
+            log_level=_env_optional("ADMINFOUNDRY_LOG_LEVEL", "INFO").upper(),
+            log_json=_env_bool("ADMINFOUNDRY_LOG_JSON", False),
+            cors_origins=_env_tuple("ADMINFOUNDRY_CORS_ORIGINS", ()),
+            cors_allow_credentials=_env_bool("ADMINFOUNDRY_CORS_ALLOW_CREDENTIALS", False),
+            cors_allow_methods=_env_tuple(
+                "ADMINFOUNDRY_CORS_ALLOW_METHODS",
+                ("GET", "POST", "PATCH", "DELETE", "OPTIONS"),
+            ),
+            cors_allow_headers=_env_tuple(
+                "ADMINFOUNDRY_CORS_ALLOW_HEADERS",
+                ("Authorization", "Content-Type", "X-Tenant-Slug"),
+            ),
+            security_headers_enabled=_env_bool("ADMINFOUNDRY_SECURITY_HEADERS_ENABLED", True),
+            environment=_env_literal(
+                "ADMINFOUNDRY_ENVIRONMENT",
+                "development",
+                get_args(Environment),
+            ),
         )
 
-    @classmethod
-    def from_settings(cls, settings: Any, **overrides) -> "CoreAdminConfig":
-        """Build config from the env-backed Settings object.
+        if overrides:
+            valid_field_names = {field.name for field in fields(cls)}
+            unknown = set(overrides) - valid_field_names
 
-        Precedence: explicit kwargs > settings object (env-backed) > built-in defaults.
-        Explicit keyword overrides always win over values loaded from settings::
+            if unknown:
+                raise ValueError(f"Unknown CoreAdminConfig override(s): {sorted(unknown)}")
 
-            config = CoreAdminConfig.from_settings(
-                settings,
-                enable_multi_tenant=True,
-                tenant_resolution="subdomain",
-                extensions=[WorkflowsExtension()],
+            config = replace(config, **overrides)
+
+        config.validate()
+        return config
+
+    def validate(self) -> None:
+        if not self.database_url.strip():
+            raise ValueError("database_url must not be empty")
+
+        if not self.secret_key.strip():
+            raise ValueError("secret_key must not be empty")
+
+        if self.secret_key == "change-me-in-production":
+            raise ValueError("secret_key must not use the insecure default value")
+
+        if self.access_token_expire_minutes <= 0:
+            raise ValueError("access_token_expire_minutes must be greater than 0")
+
+        if self.password_min_length < 8:
+            raise ValueError("password_min_length must be at least 8")
+
+        if not self.auth_api_prefix.startswith("/"):
+            raise ValueError("auth_api_prefix must start with '/'")
+
+        if not self.admin_api_prefix.startswith("/"):
+            raise ValueError("admin_api_prefix must start with '/'")
+
+        if not self.root_api_prefix.startswith("/"):
+            raise ValueError("root_api_prefix must start with '/'")
+
+        if not self.admin_ui_path.startswith("/"):
+            raise ValueError("admin_ui_path must start with '/'")
+
+        if self.tenant_resolution not in get_args(TenantResolution):
+            raise ValueError(f"tenant_resolution must be one of {get_args(TenantResolution)}")
+
+        if not self.tenant_header_name.strip():
+            raise ValueError("tenant_header_name must not be empty")
+
+        if not self.default_language.strip():
+            raise ValueError("default_language must not be empty")
+
+        if self.default_date_format not in get_args(DateFormat):
+            raise ValueError(f"default_date_format must be one of {get_args(DateFormat)}")
+
+        if self.default_date_format == "custom" and not self.default_date_pattern.strip():
+            raise ValueError(
+                "default_date_pattern must not be empty when default_date_format='custom'"
             )
-        """
-        base: dict = dict(
-            database_url=getattr(settings, "DATABASE_URL", None),
-            secret_key=getattr(settings, "SECRET_KEY", None),
-            enable_builtin_ui=getattr(settings, "ENABLE_BUILTIN_ADMIN_UI", True),
-            enable_multi_tenant=getattr(settings, "MULTI_TENANT", False),
-            tenant_resolution=getattr(settings, "TENANT_RESOLUTION_STRATEGY", "header"),
-            auth_provider=None,
-            include_auth_routes=True,
-        )
-        base.update(overrides)
-        return cls(**base)
 
-    @classmethod
-    def from_env(cls, **overrides) -> "CoreAdminConfig":
-        """Build config from environment variables; explicit kwargs always win.
+        # --- PR-4: operational baseline ---
+        if self.db_pool_size <= 0:
+            raise ValueError("db_pool_size must be > 0")
 
-        Reads DATABASE_URL, SECRET_KEY, MULTI_TENANT, TENANT_RESOLUTION_STRATEGY,
-        and ENABLE_BUILTIN_ADMIN_UI from the environment (via pydantic-settings).
-        Explicit overrides always take precedence::
+        if self.db_max_overflow < 0:
+            raise ValueError("db_max_overflow must be >= 0")
 
-            config = CoreAdminConfig.from_env(
-                enable_multi_tenant=True,
-                tenant_resolution="subdomain",
+        normalized_level = self.log_level.upper()
+        if normalized_level not in _VALID_LOG_LEVELS:
+            raise ValueError(
+                f"log_level must be one of {_VALID_LOG_LEVELS}, got {self.log_level!r}"
             )
-        """
-        from adminfoundry.settings import settings as _s
-        return cls.from_settings(_s, **overrides)
+        if logging.getLevelName(normalized_level) == f"Level {normalized_level}":
+            # extra paranoia — should never trigger because of the list check
+            raise ValueError(f"log_level {self.log_level!r} is not recognised")
 
-    def enabled_extension_names(self) -> list[str]:
-        """Return the names of all enabled user-provided extensions."""
-        return [
-            name
-            for ext in self.extensions
-            if (name := getattr(ext, "name", None))
-        ]
+        if self.cors_allow_credentials and "*" in self.cors_origins:
+            raise ValueError(
+                "Unsafe CORS config: cors_origins=['*'] combined with "
+                "cors_allow_credentials=True is rejected by browsers and "
+                "by adminfoundry."
+            )
 
-    def to_safe_dict(self) -> dict:
-        """UI-safe representation for admin contract and diagnostics. Never exposes secrets."""
+        if self.environment not in get_args(Environment):
+            raise ValueError(
+                f"environment must be one of {get_args(Environment)}, got {self.environment!r}"
+            )
+
+        # --- PR-10: production foot-guns ---
+        # validate() is called from from_env() AND from create_admin().
+        # In production mode we refuse to boot with insecure config rather
+        # than warn — a misconfigured production deployment is worse than
+        # a hard crash at startup.
+        if self.environment == "production":
+            if self.debug:
+                raise ValueError(
+                    "debug=True is not allowed in production; set ADMINFOUNDRY_DEBUG=false."
+                )
+            if self.database_url.startswith(("sqlite://", "sqlite+aiosqlite://")):
+                raise ValueError(
+                    "SQLite is not allowed in production; use a PostgreSQL "
+                    "database_url. SQLite is for local dev + tests only."
+                )
+            if len(self.secret_key) < MIN_PRODUCTION_SECRET_LENGTH:
+                raise ValueError(
+                    f"secret_key must be at least {MIN_PRODUCTION_SECRET_LENGTH} "
+                    "characters in production; generate one with "
+                    "`openssl rand -hex 32`."
+                )
+
+    def to_safe_dict(self) -> dict[str, object]:
         return {
+            "app_title": self.app_title,
+            "debug": self.debug,
+            "auth_api_prefix": self.auth_api_prefix,
+            "admin_api_prefix": self.admin_api_prefix,
+            "root_api_prefix": self.root_api_prefix,
+            "admin_ui_path": self.admin_ui_path,
+            "jwt_algorithm": self.jwt_algorithm,
+            "access_token_expire_minutes": self.access_token_expire_minutes,
+            "password_min_length": self.password_min_length,
             "enable_builtin_ui": self.enable_builtin_ui,
+            "enable_builtin_admins": self.enable_builtin_admins,
             "enable_multi_tenant": self.enable_multi_tenant,
             "tenant_resolution": self.tenant_resolution,
-            "enabled_extensions": self.enabled_extension_names(),
-            "database_url_set": self.database_url is not None,
-            "secret_key_set": self.secret_key is not None,
+            "tenant_header_name": self.tenant_header_name,
+            "default_language": self.default_language,
+            "default_date_format": self.default_date_format,
+            "default_date_pattern": self.default_date_pattern,
+            "default_show_timezone": self.default_show_timezone,
+            "db_pool_size": self.db_pool_size,
+            "db_max_overflow": self.db_max_overflow,
+            "db_pool_pre_ping": self.db_pool_pre_ping,
+            "log_level": self.log_level,
+            "log_json": self.log_json,
+            "cors_origins": list(self.cors_origins),
+            "cors_allow_credentials": self.cors_allow_credentials,
+            "cors_allow_methods": list(self.cors_allow_methods),
+            "cors_allow_headers": list(self.cors_allow_headers),
+            "security_headers_enabled": self.security_headers_enabled,
+            "environment": self.environment,
+            "database_url_set": bool(self.database_url),
+            "secret_key_set": bool(self.secret_key),
         }
