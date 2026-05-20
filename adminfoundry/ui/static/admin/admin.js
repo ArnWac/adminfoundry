@@ -1,78 +1,114 @@
-// adminfoundry minimal UI shell.
+// Entrypoint module.
 //
-// Responsibility is intentionally small:
-//   * Submit the login form, store the access token, redirect to /dashboard.
-//   * Read the access token on app pages and redirect to /login if missing.
-//   * Provide a sign-out button that clears the token and returns to /login.
+// Both app.html and login.html load this file. We dispatch on
+// `body.dataset.view`, dynamically import the matching view module, and
+// hand it the `#app-root` element plus any URL-derived arguments the
+// server already put into window.ADMINFOUNDRY.
 //
-// All real data rendering is driven by the contract + CRUD APIs and would be
-// added in a follow-up phase. The shell only proves the route + auth wiring.
-'use strict';
+// We also wire up the shell-wide concerns: the sign-out button, the
+// topbar resource navigation, and an unauthenticated -> /login redirect
+// for app pages.
 
-(function () {
-  const cfg = window.ADMINFOUNDRY || {};
-  const TOKEN_KEY = 'adminfoundry_access';
-  const view = document.body.dataset.view;
+import { APIError, auth, tokenStore } from "./api.js";
+import { getFullContract } from "./contract.js";
+import { el, mount, showToast } from "./dom.js";
 
-  function token() { return localStorage.getItem(TOKEN_KEY); }
-  function setToken(value) { localStorage.setItem(TOKEN_KEY, value); }
-  function clearToken() { localStorage.removeItem(TOKEN_KEY); }
-  function redirect(path) { window.location.href = cfg.uiPath + path; }
+const cfg = window.ADMINFOUNDRY || {};
 
-  if (view === 'login') {
-    const form = document.getElementById('login-form');
-    const err = document.getElementById('login-error');
-    if (token()) {
-      redirect('/dashboard');
-      return;
+const viewLoaders = {
+  login: () => import("./views/login.js").then((m) => m.mountLogin()),
+  dashboard: (root) => import("./views/dashboard.js").then((m) => m.mountDashboard(root)),
+  list: (root) => import("./views/list.js").then((m) => m.mountList(root, cfg.resource)),
+  detail: (root) =>
+    import("./views/detail.js").then((m) => m.mountDetail(root, cfg.resource, cfg.recordId)),
+  create: (root) =>
+    import("./views/form.js").then((m) => m.mountForm(root, cfg.resource, "create", null)),
+  edit: (root) =>
+    import("./views/form.js").then((m) => m.mountForm(root, cfg.resource, "edit", cfg.recordId)),
+  delete: (root) =>
+    import("./views/delete.js").then((m) => m.mountDelete(root, cfg.resource, cfg.recordId)),
+  settings: (root) => import("./views/settings.js").then((m) => m.mountSettings(root)),
+};
+
+async function main() {
+  const view = document.body.dataset.view || cfg.view;
+
+  if (view === "login") {
+    await viewLoaders.login();
+    return;
+  }
+
+  if (!tokenStore.isLoggedIn()) {
+    window.location.href = `${cfg.uiPath}/login`;
+    return;
+  }
+
+  wireSignout();
+  populateTopbarNav().catch(() => {
+    /* nav is non-essential; failure shouldn't break the view */
+  });
+
+  const root = document.getElementById("app-root");
+  if (!root) return;
+  const loader = viewLoaders[view];
+  if (!loader) {
+    mount(root, el("div", { class: "card" }, el("p", {}, `Unknown view: ${view}`)));
+    return;
+  }
+  try {
+    await loader(root);
+  } catch (err) {
+    const message = err instanceof APIError ? err.message : String(err);
+    mount(
+      root,
+      el(
+        "div",
+        { class: "card" },
+        el("p", { class: "form-error" }, `Failed to load view: ${message}`)
+      )
+    );
+  }
+}
+
+function wireSignout() {
+  const button = document.getElementById("signout");
+  if (!button) return;
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      await auth.logoutAll();
+    } catch {
+      // Even if the server call fails (already expired, network down…)
+      // we still want the local session gone.
+    } finally {
+      tokenStore.clear();
+      window.location.href = `${cfg.uiPath}/login`;
     }
-    if (!form) return;
-    form.addEventListener('submit', async function (event) {
-      event.preventDefault();
-      err.hidden = true;
-      const data = new FormData(form);
-      try {
-        const resp = await fetch(cfg.authPrefix + '/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: data.get('email'),
-            password: data.get('password'),
-          }),
-        });
-        if (!resp.ok) {
-          const body = await resp.json().catch(() => ({}));
-          throw new Error(body.detail || 'Sign in failed.');
-        }
-        const body = await resp.json();
-        setToken(body.access_token);
-        redirect('/dashboard');
-      } catch (e) {
-        err.textContent = e.message;
-        err.hidden = false;
-      }
-    });
-    return;
-  }
+  });
+}
 
-  if (!token()) {
-    redirect('/login');
-    return;
-  }
+async function populateTopbarNav() {
+  const nav = document.getElementById("topbar-nav");
+  if (!nav) return;
+  const contract = await getFullContract();
+  const models = (contract.models || []).slice().sort((a, b) =>
+    a.label_plural.localeCompare(b.label_plural)
+  );
 
-  const signout = document.getElementById('signout');
-  if (signout) {
-    signout.addEventListener('click', function () {
-      clearToken();
-      redirect('/login');
-    });
-  }
+  const links = models.map((m) => {
+    const a = el("a", { href: `${cfg.uiPath}/${m.resource}` }, m.label_plural);
+    if (cfg.resource === m.resource) a.setAttribute("aria-current", "page");
+    return a;
+  });
 
-  const root = document.getElementById('app-root');
-  if (root) {
-    root.dataset.loading = 'false';
-    root.textContent = 'adminfoundry — ' + (cfg.view || 'view') +
-      (cfg.resource ? ' / ' + cfg.resource : '') +
-      (cfg.recordId ? ' / ' + cfg.recordId : '');
-  }
-})();
+  const settingsLink = el("a", { href: `${cfg.uiPath}/settings` }, "Settings");
+  if (cfg.view === "settings") settingsLink.setAttribute("aria-current", "page");
+  links.push(settingsLink);
+
+  nav.replaceChildren(...links);
+}
+
+main().catch((err) => {
+  const message = err instanceof APIError ? err.message : String(err);
+  showToast(`Initialization failed: ${message}`, { type: "error" });
+});

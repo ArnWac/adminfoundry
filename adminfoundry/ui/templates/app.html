@@ -13,11 +13,16 @@
 >
   <header class="topbar">
     <a class="brand" href="{{ admin_ui_path }}/dashboard">{{ admin_title }}</a>
-    <button id="signout" type="button">Sign out</button>
+    <nav class="topbar-nav" id="topbar-nav" aria-label="Resources"></nav>
+    <button id="signout" type="button" class="btn btn-link">Sign out</button>
   </header>
+
   <main id="app-root" data-loading="true">
-    <p>Loading…</p>
+    <p class="placeholder">Loading…</p>
   </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
   <script>
     window.ADMINFOUNDRY = {
       uiPath: {{ admin_ui_path | tojson }},
@@ -28,6 +33,6 @@
       recordId: {{ record_id | tojson }},
     };
   </script>
-  <script src="{{ admin_ui_path }}/static/admin.js"></script>
+  <script type="module" src="{{ admin_ui_path }}/static/admin.js"></script>
 </body>
 </html>

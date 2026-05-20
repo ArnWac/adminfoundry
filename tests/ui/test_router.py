@@ -138,10 +138,40 @@ def test_no_admin_subdirectory_left():
     assert not (templates_dir / "admin").exists()
 
 
-def test_no_legacy_static_assets():
+def test_static_admin_layout():
+    """The bundled UI ships as native ES modules — a single entrypoint plus
+    a small set of core helpers and one file per view. Guards against random
+    legacy files reappearing at the top level."""
     static_dir = PACKAGE_ROOT / "ui" / "static" / "admin"
     files = sorted(p.name for p in static_dir.iterdir() if p.is_file())
-    assert files == ["admin.css", "admin.js"], files
+    assert files == [
+        "admin.css",
+        "admin.js",
+        "api.js",
+        "contract.js",
+        "dom.js",
+        "format.js",
+    ], files
+    views_dir = static_dir / "views"
+    assert views_dir.is_dir(), "views/ directory must exist"
+    view_files = sorted(p.name for p in views_dir.iterdir() if p.is_file())
+    assert view_files == [
+        "dashboard.js",
+        "delete.js",
+        "detail.js",
+        "form.js",
+        "list.js",
+        "login.js",
+        "settings.js",
+    ], view_files
+
+
+def test_static_view_module_served(client):
+    """End-to-end check that the StaticFiles mount serves nested module files
+    (not just the entrypoint), so the dynamic imports in admin.js resolve."""
+    resp = client.get("/admin/static/views/dashboard.js")
+    assert resp.status_code == 200
+    assert "javascript" in resp.headers["content-type"]
 
 
 # --- builtin UI can be disabled ---
