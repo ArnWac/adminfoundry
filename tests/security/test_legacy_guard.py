@@ -79,6 +79,7 @@ def test_package_tree_only_contains_v1_subpackages():
         "core",
         "crud",
         "db",
+        "extensions",
         "i18n",
         "models",
         "registry",
