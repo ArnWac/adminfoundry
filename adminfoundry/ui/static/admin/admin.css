@@ -498,6 +498,38 @@ form .form-actions {
   margin: 0 0 0.75rem;
 }
 
+/* --- modal (import upload) --- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(23, 43, 77, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal-box {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  padding: 1.5rem 1.75rem;
+  max-width: 480px;
+  width: 90%;
+}
+.modal-box h2 { margin: 0 0 0.5rem; }
+.modal-box p.muted { color: var(--fg-muted); font-size: 0.85rem; margin: 0 0 1rem; }
+.modal-status { margin-top: 0.75rem; min-height: 1.5em; }
+.import-errors {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  font-size: 0.82rem;
+  color: var(--fg-muted);
+  max-height: 200px;
+  overflow-y: auto;
+}
+.import-errors li { margin-bottom: 0.2rem; }
+
 /* --- toast --- */
 .toast {
   position: fixed;

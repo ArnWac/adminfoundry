@@ -177,6 +177,7 @@ def test_static_admin_layout():
         "delete.js",
         "detail.js",
         "form.js",
+        "import_modal.js",
         "list.js",
         "login.js",
         "settings.js",

@@ -5,6 +5,7 @@ import { APIError, admin } from "../api.js";
 import { getResourceContract } from "../contract.js";
 import { clear, el, mount, setBreadcrumb, showToast } from "../dom.js";
 import { formatValue } from "../format.js";
+import { openImportModal } from "./import_modal.js";
 
 const cfg = window.ADMINFOUNDRY || {};
 const PAGE_SIZE = 25;
@@ -57,10 +58,44 @@ export async function mountList(root, resource) {
     "+ New"
   );
 
+  // Import/Export buttons. The endpoints exist only when the import_export
+  // extension is mounted; clicking when it isn't returns 404 and surfaces
+  // a clear error toast — no client-side feature flag needed.
+  const importBtn = el("button", { type: "button", class: "btn" }, "Import");
+  const exportCsvBtn = el("button", { type: "button", class: "btn" }, "Export CSV");
+  const exportXlsxBtn = el("button", { type: "button", class: "btn" }, "Export XLSX");
+
+  importBtn.addEventListener("click", () => openImportModal(resource, contract, () => load()));
+  exportCsvBtn.addEventListener("click", () => doExport("csv"));
+  exportXlsxBtn.addEventListener("click", () => doExport("xlsx"));
+
+  async function doExport(format) {
+    const ids = Array.from(state.selectedIds);
+    try {
+      await admin.exportDownload(resource, {
+        format,
+        search: state.search,
+        ids,  // empty array → server falls back to full (search-filtered) export
+      });
+    } catch (err) {
+      const message = err instanceof APIError ? err.message : String(err);
+      showToast(`Export failed: ${message}`, { type: "error" });
+    }
+  }
+
+  function refreshExportLabels() {
+    const n = state.selectedIds.size;
+    const suffix = n > 0 ? ` (${n} selected)` : "";
+    exportCsvBtn.textContent = `Export CSV${suffix}`;
+    exportXlsxBtn.textContent = `Export XLSX${suffix}`;
+  }
+
   const layout = el("div", {}, [
     el("div", { class: "page-header" }, [
       el("h1", {}, contract.label_plural),
-      el("div", { class: "page-actions" }, [newBtn]),
+      el("div", { class: "page-actions" }, [
+        importBtn, exportCsvBtn, exportXlsxBtn, newBtn,
+      ]),
     ]),
     el("div", { class: "card" }, [
       el("div", { class: "toolbar" }, [
@@ -164,6 +199,7 @@ export async function mountList(root, resource) {
   function refreshSelectionUI() {
     actionRun.disabled = state.selectedIds.size === 0 || !actionSelect.value;
     selectedCount.textContent = `${state.selectedIds.size} selected`;
+    refreshExportLabels();
   }
 
   // --- handlers ---

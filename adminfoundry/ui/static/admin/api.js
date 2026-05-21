@@ -99,4 +99,71 @@ export const admin = {
 
   runAction: (resource, action, ids) =>
     request("POST", `${cfg.adminPrefix}/${resource}/_actions/${action}`, { ids }),
+
+  // import_export extension. Returns a Blob and triggers a browser download.
+  // If ``ids`` is non-empty, the server returns ONLY those primary keys and
+  // ignores ``search``; otherwise it streams the full (search-filtered) list.
+  exportDownload: (resource, { format = "csv", search = "", ids = [] } = {}) => {
+    const qs = new URLSearchParams({ format });
+    if (ids && ids.length > 0) {
+      for (const id of ids) qs.append("ids", String(id));
+    } else if (search) {
+      qs.set("search", search);
+    }
+    const url = `${cfg.adminPrefix}/${resource}/_export?${qs}`;
+    return downloadFile(url);
+  },
+  // import_export extension. Returns the JSON import report.
+  importFile: (resource, file) =>
+    uploadFile(`${cfg.adminPrefix}/${resource}/_import`, file),
 };
+
+
+// --- file helpers (used by the import_export extension UI) ---
+
+async function downloadFile(url) {
+  const headers = {};
+  const token = tokenStore.get();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const resp = await fetch(url, { headers });
+  if (resp.status === 401) {
+    redirectToLogin();
+    throw new APIError(401, await safeJson(resp));
+  }
+  if (!resp.ok) {
+    throw new APIError(resp.status, await safeJson(resp));
+  }
+  const blob = await resp.blob();
+  const cd = resp.headers.get("content-disposition") || "";
+  const match = /filename="([^"]+)"/.exec(cd);
+  const filename = (match && match[1]) || "download";
+
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
+async function uploadFile(url, file) {
+  const headers = {};
+  const token = tokenStore.get();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const form = new FormData();
+  form.append("file", file, file.name);
+
+  const resp = await fetch(url, { method: "POST", headers, body: form });
+  if (resp.status === 401) {
+    redirectToLogin();
+    throw new APIError(401, await safeJson(resp));
+  }
+  if (resp.status === 204) return null;
+  const payload = await safeJson(resp);
+  if (!resp.ok) throw new APIError(resp.status, payload);
+  return payload;
+}
