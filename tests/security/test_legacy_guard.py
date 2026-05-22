@@ -27,7 +27,9 @@ FORBIDDEN_PATTERNS: dict[str, re.Pattern[str]] = {
     # forbid. Re-add only if a future iteration moves away from the name.
     "PolicyEngine": re.compile(r"\bPolicyEngine\b"),
     "policy_engine module": re.compile(r"\bpolicy_engine\b"),
-    "ExtensionRegistry": re.compile(r"\bExtensionRegistry\b"),
+    # NOTE: ``ExtensionRegistry`` is intentionally NOT in this list anymore.
+    # The name now refers to the formal class introduced by the Phase 5
+    # extension-system refactor (was a banned legacy term in v0).
     "DashboardRegistry": re.compile(r"\bDashboardRegistry\b"),
     "EventBus": re.compile(r"\bEventBus\b"),
     "AsyncSessionLocal": re.compile(r"\bAsyncSessionLocal\b"),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterable
 
 from fastapi import FastAPI
@@ -11,7 +12,8 @@ from adminfoundry.core.installers import install_middleware, install_routes
 from adminfoundry.core.logging import configure_logging
 from adminfoundry.core.runtime import AdminRuntime, ProviderSet
 from adminfoundry.db.session import DatabaseManager
-from adminfoundry.extensions import Extension
+from adminfoundry.extensions import AdminExtension, ExtensionContext
+from adminfoundry.extensions.lifecycle import compose_lifespan, run_setup_phase
 from adminfoundry.providers import (
     BuiltinJWTAuthProvider,
     BuiltinPermissionProvider,
@@ -31,7 +33,7 @@ def create_admin(
     config: CoreAdminConfig | None = None,
     *,
     register: Callable[[AdminRegistry], None] | None = None,
-    extensions: Iterable[Extension] = (),
+    extensions: Iterable[AdminExtension] = (),
     auth_provider: AuthProvider | None = None,
     user_provider: UserProvider | None = None,
     permission_provider: PermissionProvider | None = None,
@@ -43,11 +45,9 @@ def create_admin(
 
     configure_logging(config)
 
-    app = FastAPI(
-        title=config.app_title,
-        debug=config.debug,
-        **fastapi_kwargs,
-    )
+    # The user may have passed their own lifespan. We compose it with the
+    # extension startup/shutdown hooks so both run, in the right order.
+    user_lifespan = fastapi_kwargs.pop("lifespan", None)
 
     # Each provider defaults to the framework's built-in implementation,
     # which preserves v1 behaviour exactly. Apps with external identity
@@ -71,6 +71,17 @@ def create_admin(
         providers=providers,
     )
 
+    # Register extensions up front so the lifespan composer can see them.
+    runtime.extensions.register_all(extensions)
+
+    composed = compose_lifespan(runtime.extensions, user_lifespan)
+
+    app = FastAPI(
+        title=config.app_title,
+        debug=config.debug,
+        lifespan=composed,
+        **fastapi_kwargs,
+    )
     app.state.adminfoundry = runtime
 
     register_error_handlers(app)
@@ -82,11 +93,19 @@ def create_admin(
     if register is not None:
         register(runtime.registry)
 
-    # Extensions run AFTER user registration and BEFORE core routes are
-    # mounted, so an extension's static routes (e.g. /{resource}/_export)
-    # are matched ahead of the dynamic CRUD /{resource}/{id} route.
-    for extension in extensions:
-        extension(runtime.registry, app, config)
+    # Build the per-app ExtensionContext and walk every extension through
+    # the documented lifecycle hooks. Extension routes are mounted INSIDE
+    # this call (before install_routes below), so static-path extension
+    # routes win over the dynamic CRUD /{resource}/{id} route.
+    ctx = ExtensionContext(
+        config=config,
+        permissions=runtime.permission_registry,
+        contract=runtime.contract_contributions,
+        navigation=runtime.navigation,
+        protected_fields=runtime.protected_fields,
+        logger=logging.getLogger("adminfoundry.extensions"),
+    )
+    run_setup_phase(runtime.extensions, ctx, app)
 
     install_routes(app, config)
 

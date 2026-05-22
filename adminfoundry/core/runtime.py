@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from adminfoundry.authz.registry import PermissionRegistry
+from adminfoundry.contract.contributions import ContractContributionRegistry
 from adminfoundry.core.config import CoreAdminConfig
 from adminfoundry.db.session import DatabaseManager
+from adminfoundry.extensions.registry import ExtensionRegistry
 from adminfoundry.providers.base import (
     AuthProvider,
     PermissionProvider,
@@ -17,6 +20,7 @@ from adminfoundry.security.protected_fields import (
 from adminfoundry.security.protected_fields import (
     get_registry as get_protected_field_registry,
 )
+from adminfoundry.ui.navigation import NavigationRegistry
 
 
 @dataclass(slots=True)
@@ -59,11 +63,19 @@ class AdminRuntime:
     registry: AdminRegistry = field(default_factory=AdminRegistry)
     providers: ProviderSet = field(default_factory=_default_providers)
     #: Module-level singleton — every runtime references the same registry.
-    #: Phase 5 extensions register via ``runtime.protected_fields.register(...)``;
-    #: ``create_admin`` freezes the registry after extension setup.
+    #: Extension ``register_protected_fields`` hooks write into it before
+    #: ``create_admin`` freezes it for the duration of the request lifecycle.
     protected_fields: ProtectedFieldRegistry = field(
         default_factory=get_protected_field_registry
     )
+    #: Extension contributions live in these four registries; populated
+    #: during the Phase-5 lifecycle and frozen before the first request.
+    extensions: ExtensionRegistry = field(default_factory=ExtensionRegistry)
+    permission_registry: PermissionRegistry = field(default_factory=PermissionRegistry)
+    contract_contributions: ContractContributionRegistry = field(
+        default_factory=ContractContributionRegistry
+    )
+    navigation: NavigationRegistry = field(default_factory=NavigationRegistry)
 
 
 def get_runtime(app) -> AdminRuntime:

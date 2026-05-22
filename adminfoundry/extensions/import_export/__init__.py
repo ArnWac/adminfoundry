@@ -16,14 +16,15 @@ XLSX format requires ``openpyxl`` — install with
 ``pip install adminfoundry[xlsx]``. Without it, ``format=xlsx`` returns
 501 with a helpful message; CSV stays available.
 
-Opt in by passing :func:`register` to ``create_admin``::
+Opt in by passing the extension instance to ``create_admin``::
 
-    from adminfoundry.extensions.import_export import register as import_export
+    from adminfoundry import create_admin
+    from adminfoundry.extensions.import_export import ImportExportExtension
 
     app = create_admin(
         config=config,
         register=register_my_admins,
-        extensions=[import_export],
+        extensions=[ImportExportExtension()],
     )
 
 Not in MVP:
@@ -38,14 +39,34 @@ Not in MVP:
 
 from __future__ import annotations
 
+from fastapi import FastAPI
+
+from adminfoundry.extensions.base import AdminExtension
+from adminfoundry.extensions.context import ExtensionContext
 from adminfoundry.extensions.import_export.router import (
     EXPORT_AUDIT_ACTION,
     IMPORT_AUDIT_ACTION,
     MAX_EXPORT_ROWS,
     MAX_IMPORT_ROWS,
     SUPPORTED_EXPORT_FORMATS,
-    register,
 )
+from adminfoundry.extensions.import_export.router import (
+    router as _import_export_router,
+)
+
+
+class ImportExportExtension(AdminExtension):
+    """CSV (always) + XLSX (with openpyxl) export and import endpoints."""
+
+    name = "import_export"
+
+    def register_routes(self, app: FastAPI, ctx: ExtensionContext) -> None:
+        app.include_router(
+            _import_export_router,
+            prefix=ctx.config.admin_api_prefix,
+            tags=["admin-import-export"],
+        )
+
 
 __all__ = [
     "EXPORT_AUDIT_ACTION",
@@ -53,5 +74,5 @@ __all__ = [
     "MAX_EXPORT_ROWS",
     "MAX_IMPORT_ROWS",
     "SUPPORTED_EXPORT_FORMATS",
-    "register",
+    "ImportExportExtension",
 ]

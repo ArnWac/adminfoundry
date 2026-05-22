@@ -31,9 +31,7 @@ from adminfoundry.extensions.import_export import (
     IMPORT_AUDIT_ACTION,
     MAX_EXPORT_ROWS,
     MAX_IMPORT_ROWS,
-)
-from adminfoundry.extensions.import_export import (
-    register as csv_export,
+    ImportExportExtension,
 )
 from adminfoundry.models.audit_log import AuditLog
 from adminfoundry.models.base import GlobalModel
@@ -82,7 +80,7 @@ def app(tmp_path):
             enable_builtin_admins=False,
         ),
         register=lambda reg: reg.register(WidgetAdmin),
-        extensions=[csv_export],
+        extensions=[ImportExportExtension()],
     )
     runtime = application.state.adminfoundry
 

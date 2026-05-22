@@ -44,7 +44,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from adminfoundry.admin.context import AdminContext, require_admin_context
 from adminfoundry.audit import record_audit_in_session, request_audit_kwargs
 from adminfoundry.authz.permissions import permission_key
-from adminfoundry.core.config import CoreAdminConfig
 from adminfoundry.crud.payload import clean_write_payload
 from adminfoundry.crud.query import (
     apply_ordering,
@@ -53,7 +52,7 @@ from adminfoundry.crud.query import (
     primary_key_column,
 )
 from adminfoundry.db.dependencies import get_async_session
-from adminfoundry.registry import AdminRegistry, ModelAdmin
+from adminfoundry.registry import ModelAdmin
 from adminfoundry.schemas.builder import build_model_schema
 from adminfoundry.schemas.serialization.serializer import serialize_records
 from adminfoundry.security.validation import (
@@ -450,9 +449,3 @@ async def import_records(
     }
 
 
-def register(registry: AdminRegistry, app, config: CoreAdminConfig) -> None:
-    """Extension entry point — mount the export+import router under the admin prefix."""
-    # ``registry`` is unused at registration time but kept in the signature
-    # so the function matches the :data:`adminfoundry.extensions.Extension` shape.
-    del registry
-    app.include_router(router, prefix=config.admin_api_prefix, tags=["admin-import-export"])
