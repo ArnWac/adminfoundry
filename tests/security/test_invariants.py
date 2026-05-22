@@ -44,7 +44,7 @@ from adminfoundry.models.base import GlobalModel
 from adminfoundry.models.user import User
 from adminfoundry.schemas.builder import build_model_schema
 from adminfoundry.schemas.serialization.serializer import serialize_record
-from tests._helpers import make_admin_tenant, make_admin_user, override_admin_context
+from tests._helpers import make_admin_principal, make_admin_tenant, override_admin_context
 
 SECRET = "test-s5-invariant-secret"
 ALG = "HS256"
@@ -122,7 +122,7 @@ def app_with_user(tmp_path):
 def _grant(app, email: str, keys: set[str]) -> None:
     override_admin_context(
         app,
-        user=make_admin_user(email=email),
+        principal=make_admin_principal(email=email),
         tenant=make_admin_tenant("acme"),
         permissions=frozenset(keys),
     )

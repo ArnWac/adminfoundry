@@ -39,11 +39,11 @@ class AuthIdentity:
 
 
 @dataclass(frozen=True, slots=True)
-class AdminUser:
+class AdminPrincipal:
     """Neutral representation of an admin user.
 
     The full app-specific user object (whatever the UserProvider stores
-    internally) does not leak across this boundary; AdminUser is what
+    internally) does not leak across this boundary; AdminPrincipal is what
     every adminfoundry component sees.
     """
 
@@ -89,7 +89,7 @@ class AuthProvider(Protocol):
 
 @runtime_checkable
 class UserProvider(Protocol):
-    """Loads an :class:`AdminUser` from its opaque identifier.
+    """Loads an :class:`AdminPrincipal` from its opaque identifier.
 
     Returning ``None`` for a previously-authenticated ``user_id`` means
     the user has been deleted, deactivated, or hidden; the framework
@@ -107,7 +107,7 @@ class UserProvider(Protocol):
         user_id: str,
         *,
         request: Request | None = None,
-    ) -> AdminUser | None: ...
+    ) -> AdminPrincipal | None: ...
 
 
 @runtime_checkable
@@ -122,11 +122,11 @@ class PermissionProvider(Protocol):
     required key against this set — the provider just produces the set.
     """
 
-    def is_superadmin(self, user: AdminUser) -> bool: ...
+    def is_superadmin(self, user: AdminPrincipal) -> bool: ...
 
     async def get_permissions(
         self,
-        user: AdminUser,
+        user: AdminPrincipal,
         tenant: AdminTenant | None,
         *,
         request: Request | None = None,

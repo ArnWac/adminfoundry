@@ -85,7 +85,7 @@ async def _audit_crud(
     """Defense in depth: wrap the in-session audit helper so any failure
     short of an OS-level error is logged and not surfaced as a 500.
 
-    ``ctx.user`` is duck-typing compatible with the audit helper's
+    ``ctx.principal`` is duck-typing compatible with the audit helper's
     ``actor: User | None`` — both expose ``.id`` and ``.email``.
     """
     try:
@@ -95,7 +95,7 @@ async def _audit_crud(
         await record_audit_in_session(
             session,
             action=action,
-            actor=ctx.user,
+            actor=ctx.principal,
             resource=resource,
             record_id=record_id,
             changes=changes,

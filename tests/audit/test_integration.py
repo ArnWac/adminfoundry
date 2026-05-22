@@ -27,7 +27,7 @@ from adminfoundry.auth.password import hash_password
 from adminfoundry.models.audit_log import AuditLog
 from adminfoundry.models.base import GlobalModel
 from adminfoundry.models.user import User
-from tests._helpers import make_admin_tenant, make_admin_user, override_admin_context
+from tests._helpers import make_admin_principal, make_admin_tenant, override_admin_context
 
 
 class _AppBase(DeclarativeBase):
@@ -90,7 +90,7 @@ def app(tmp_path):
 
     override_admin_context(
         application,
-        user=make_admin_user(email="alice@example.com"),
+        principal=make_admin_principal(email="alice@example.com"),
         tenant=make_admin_tenant("acme"),
         permissions=frozenset({"admin.*"}),
     )

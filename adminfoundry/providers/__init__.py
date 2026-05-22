@@ -6,7 +6,7 @@ concerns in adminfoundry:
 * :class:`~adminfoundry.providers.base.AuthProvider` — turns a request
   into an :class:`~adminfoundry.providers.base.AuthIdentity` (or None).
 * :class:`~adminfoundry.providers.base.UserProvider` — turns a user id
-  into an :class:`~adminfoundry.providers.base.AdminUser`.
+  into an :class:`~adminfoundry.providers.base.AdminPrincipal`.
 * :class:`~adminfoundry.providers.base.PermissionProvider` — returns a
   user's permission keys and answers superadmin queries.
 * :class:`~adminfoundry.providers.base.TenantProvider` — resolves the
@@ -26,8 +26,8 @@ from __future__ import annotations
 
 from adminfoundry.providers.auth import BuiltinJWTAuthProvider
 from adminfoundry.providers.base import (
+    AdminPrincipal,
     AdminTenant,
-    AdminUser,
     AuthIdentity,
     AuthProvider,
     PermissionProvider,
@@ -39,8 +39,8 @@ from adminfoundry.providers.tenants import BuiltinTenantProvider
 from adminfoundry.providers.users import BuiltinSQLAlchemyUserProvider
 
 __all__ = [
+    "AdminPrincipal",
     "AdminTenant",
-    "AdminUser",
     "AuthIdentity",
     "AuthProvider",
     "BuiltinJWTAuthProvider",

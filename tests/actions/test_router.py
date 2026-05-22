@@ -18,7 +18,7 @@ from adminfoundry.actions import AdminAction, BulkDeleteAction
 from adminfoundry.auth.password import hash_password
 from adminfoundry.models.base import GlobalModel
 from adminfoundry.models.user import User
-from tests._helpers import make_admin_tenant, make_admin_user, override_admin_context
+from tests._helpers import make_admin_principal, make_admin_tenant, override_admin_context
 
 
 class _AppBase(DeclarativeBase):
@@ -112,7 +112,7 @@ def app(tmp_path):
     # Default: an authenticated user, no tenant, no permissions. Auth-only
     # endpoints (contract) pass; permission-gated endpoints (CRUD/actions)
     # 403 unless a test overrides with _grant().
-    override_admin_context(app=application, user=make_admin_user(email="user@example.com"))
+    override_admin_context(app=application, principal=make_admin_principal(email="user@example.com"))
 
     yield application
 
@@ -122,7 +122,7 @@ def app(tmp_path):
 def _grant(app, keys: set[str]) -> None:
     override_admin_context(
         app,
-        user=make_admin_user(email="user@example.com"),
+        principal=make_admin_principal(email="user@example.com"),
         tenant=make_admin_tenant("acme"),
         permissions=frozenset(keys),
     )

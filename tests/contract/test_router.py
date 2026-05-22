@@ -21,7 +21,7 @@ from adminfoundry.auth.password import hash_password
 from adminfoundry.contract.service import CONTRACT_VERSION
 from adminfoundry.models.base import GlobalModel
 from adminfoundry.models.user import User
-from tests._helpers import make_admin_user, override_admin_context
+from tests._helpers import make_admin_principal, override_admin_context
 
 
 class _AppBase(DeclarativeBase):
@@ -82,7 +82,7 @@ def app(tmp_path):
 
     asyncio.run(_setup())
 
-    override_admin_context(app, user=make_admin_user(email="user@example.com"))
+    override_admin_context(app, principal=make_admin_principal(email="user@example.com"))
 
     yield app
 

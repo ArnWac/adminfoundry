@@ -38,7 +38,7 @@ from adminfoundry.extensions.import_export import (
 from adminfoundry.models.audit_log import AuditLog
 from adminfoundry.models.base import GlobalModel
 from adminfoundry.models.user import User
-from tests._helpers import make_admin_tenant, make_admin_user, override_admin_context
+from tests._helpers import make_admin_principal, make_admin_tenant, override_admin_context
 
 
 class _Base(DeclarativeBase):
@@ -64,7 +64,7 @@ class WidgetAdmin(ModelAdmin):
 def _grant(app, keys: set[str]) -> None:
     override_admin_context(
         app,
-        user=make_admin_user(email="alice@example.com"),
+        principal=make_admin_principal(email="alice@example.com"),
         tenant=make_admin_tenant("acme"),
         permissions=frozenset(keys),
     )
@@ -104,7 +104,7 @@ def app(tmp_path):
     asyncio.run(_setup())
 
     # Default authenticated context; tests that need permissions call _grant().
-    override_admin_context(application, user=make_admin_user(email="alice@example.com"))
+    override_admin_context(application, principal=make_admin_principal(email="alice@example.com"))
 
     yield application
     asyncio.run(runtime.db.dispose())

@@ -266,11 +266,11 @@ def test_crud_unknown_resource_uses_envelope(tmp_path):
 
     asyncio.run(_user_stub())
 
-    from tests._helpers import make_admin_tenant, make_admin_user, override_admin_context
+    from tests._helpers import make_admin_principal, make_admin_tenant, override_admin_context
 
     override_admin_context(
         app,
-        user=make_admin_user(email="x@y.com"),
+        principal=make_admin_principal(email="x@y.com"),
         tenant=make_admin_tenant("x"),
         permissions=frozenset({"admin.*"}),
     )

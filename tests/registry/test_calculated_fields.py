@@ -34,7 +34,7 @@ from adminfoundry.schemas.serialization.serializer import (
     serialize_record,
     serialize_records,
 )
-from tests._helpers import make_admin_tenant, make_admin_user, override_admin_context
+from tests._helpers import make_admin_principal, make_admin_tenant, override_admin_context
 
 
 class _AppBase(DeclarativeBase):
@@ -214,7 +214,7 @@ def app(tmp_path):
 
     override_admin_context(
         application,
-        user=make_admin_user(email="user@example.com"),
+        principal=make_admin_principal(email="user@example.com"),
         tenant=make_admin_tenant("acme"),
         permissions=frozenset({"admin.*"}),
     )

@@ -252,7 +252,7 @@ async def export_records(
         await record_audit_in_session(
             session,
             action=EXPORT_AUDIT_ACTION,
-            actor=ctx.user,
+            actor=ctx.principal,
             resource=admin.model_name,
             tenant_id=ctx.tenant.id if ctx.tenant is not None else None,
             changes={
@@ -425,7 +425,7 @@ async def import_records(
         await record_audit_in_session(
             session,
             action=IMPORT_AUDIT_ACTION,
-            actor=ctx.user,
+            actor=ctx.principal,
             resource=admin.model_name,
             tenant_id=ctx.tenant.id if ctx.tenant is not None else None,
             changes={

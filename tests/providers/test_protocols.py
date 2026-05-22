@@ -16,8 +16,8 @@ from __future__ import annotations
 import pytest
 
 from adminfoundry.providers import (
+    AdminPrincipal,
     AdminTenant,
-    AdminUser,
     AuthIdentity,
     AuthProvider,
     BuiltinJWTAuthProvider,
@@ -33,7 +33,7 @@ from adminfoundry.providers import (
 
 
 def test_admin_user_is_frozen():
-    u = AdminUser(id="42", email="a@b.c")
+    u = AdminPrincipal(id="42", email="a@b.c")
     with pytest.raises(Exception):
         u.email = "x@y.z"  # frozen dataclass
 
@@ -75,7 +75,7 @@ def test_builtin_tenant_provider_is_tenant_provider():
 @pytest.mark.asyncio
 async def test_permission_provider_superadmin_gets_wildcard():
     p = BuiltinPermissionProvider()
-    user = AdminUser(id="42", is_superadmin=True)
+    user = AdminPrincipal(id="42", is_superadmin=True)
     perms = await p.get_permissions(user, tenant=None)
     assert "admin.*" in perms
 
@@ -83,15 +83,15 @@ async def test_permission_provider_superadmin_gets_wildcard():
 @pytest.mark.asyncio
 async def test_permission_provider_no_tenant_no_perms():
     p = BuiltinPermissionProvider()
-    user = AdminUser(id="42", is_superadmin=False)
+    user = AdminPrincipal(id="42", is_superadmin=False)
     perms = await p.get_permissions(user, tenant=None)
     assert perms == frozenset()
 
 
 def test_permission_provider_is_superadmin_flag():
     p = BuiltinPermissionProvider()
-    assert p.is_superadmin(AdminUser(id="42", is_superadmin=True)) is True
-    assert p.is_superadmin(AdminUser(id="43", is_superadmin=False)) is False
+    assert p.is_superadmin(AdminPrincipal(id="42", is_superadmin=True)) is True
+    assert p.is_superadmin(AdminPrincipal(id="43", is_superadmin=False)) is False
 
 
 # --- Fake external providers also conform to the Protocols ---
@@ -104,7 +104,7 @@ class FakeOAuthProvider:
 
 class FakeRestUserProvider:
     async def get_by_id(self, user_id, *, request=None):
-        return AdminUser(id=user_id, email=f"{user_id}@example.com")
+        return AdminPrincipal(id=user_id, email=f"{user_id}@example.com")
 
 
 class FakeRBACProvider:

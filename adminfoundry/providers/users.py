@@ -3,7 +3,7 @@
 Loads users from the public schema. External providers that wrap a
 different user store (e.g. an existing app-level ``MyAppUser`` table or
 a cached Google profile) replace this entirely; the framework only sees
-the neutral :class:`AdminUser`.
+the neutral :class:`AdminPrincipal`.
 
 Activeness is enforced here — ``get_by_id`` returns ``None`` for users
 where ``is_active`` is False, matching the behaviour of the legacy
@@ -17,11 +17,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from adminfoundry.models.user import User
-from adminfoundry.providers.base import AdminUser
+from adminfoundry.providers.base import AdminPrincipal
 
 
-def _to_admin_user(row: User) -> AdminUser:
-    return AdminUser(
+def _to_admin_principal(row: User) -> AdminPrincipal:
+    return AdminPrincipal(
         id=str(row.id),
         email=row.email,
         display_name=row.full_name,
@@ -46,7 +46,7 @@ class BuiltinSQLAlchemyUserProvider:
         user_id: str,
         *,
         request: Request | None = None,
-    ) -> AdminUser | None:
+    ) -> AdminPrincipal | None:
         if request is None:
             raise RuntimeError(
                 "BuiltinSQLAlchemyUserProvider needs the request to reach the DB; "
@@ -60,4 +60,4 @@ class BuiltinSQLAlchemyUserProvider:
             ).scalar_one_or_none()
         if row is None or not row.is_active:
             return None
-        return _to_admin_user(row)
+        return _to_admin_principal(row)

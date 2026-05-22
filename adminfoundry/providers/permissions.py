@@ -26,19 +26,19 @@ from sqlalchemy.orm import selectinload
 
 from adminfoundry.models.tenant_membership import TenantMembership
 from adminfoundry.models.tenant_rbac import TenantMembershipRole, TenantRole
-from adminfoundry.providers.base import AdminTenant, AdminUser
+from adminfoundry.providers.base import AdminPrincipal, AdminTenant
 from adminfoundry.tenancy.schema_strategy import set_search_path
 
 
 class BuiltinPermissionProvider:
     """Implements :class:`adminfoundry.providers.base.PermissionProvider`."""
 
-    def is_superadmin(self, user: AdminUser) -> bool:
+    def is_superadmin(self, user: AdminPrincipal) -> bool:
         return user.is_superadmin
 
     async def get_permissions(
         self,
-        user: AdminUser,
+        user: AdminPrincipal,
         tenant: AdminTenant | None,
         *,
         request: Request | None = None,

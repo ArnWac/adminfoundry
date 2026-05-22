@@ -110,10 +110,10 @@ async def run_action(
     action_instance = _resolve_action(admin, action)
     _require_permission(ctx, admin.model_name, action_instance.name)
     records = await _resolve_records(session, admin, payload.ids)
-    # Actions historically receive the legacy User; AdminUser is the
-    # neutral DTO. Pass ctx.user through — custom actions that only read
-    # ``.id`` / ``.email`` / ``.is_superadmin`` keep working unchanged.
-    result = await action_instance.execute(records, session, ctx.user)
+    # Actions historically receive the legacy User; AdminPrincipal is the
+    # neutral DTO. Pass ctx.principal through — custom actions that only
+    # read ``.id`` / ``.email`` / ``.is_superadmin`` keep working unchanged.
+    result = await action_instance.execute(records, session, ctx.principal)
     if not isinstance(result, dict):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -123,7 +123,7 @@ async def run_action(
         await record_audit_in_session(
             session,
             action=ADMIN_ACTION,
-            actor=ctx.user,
+            actor=ctx.principal,
             resource=admin.model_name,
             tenant_id=ctx.tenant.id if ctx.tenant is not None else None,
             changes={

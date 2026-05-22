@@ -68,7 +68,7 @@ class BuiltinJWTAuthProvider:
             raise _unauthorized("Invalid access token.") from exc
 
         # token_version is a JWT-specific invariant; it does not belong on
-        # the neutral AdminUser DTO. We check it here so that external
+        # the neutral AdminPrincipal DTO. We check it here so that external
         # auth providers (which don't have token_version) don't have to
         # know about this concept.
         runtime = request.app.state.adminfoundry

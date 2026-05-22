@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from adminfoundry import CoreAdminConfig, create_admin
 from adminfoundry.admin import AdminContext, build_admin_context
-from adminfoundry.providers.base import AdminTenant, AdminUser, AuthIdentity
+from adminfoundry.providers.base import AdminPrincipal, AdminTenant, AuthIdentity
 
 # --- Fakes ---
 
@@ -41,9 +41,9 @@ class _StaticAuthProvider:
 
 
 class _StaticUserProvider:
-    """Hands back a hard-coded :class:`AdminUser` for the known id."""
+    """Hands back a hard-coded :class:`AdminPrincipal` for the known id."""
 
-    def __init__(self, user: AdminUser):
+    def __init__(self, user: AdminPrincipal):
         self.user = user
 
     async def get_by_id(self, user_id, *, request=None):
@@ -105,8 +105,8 @@ def _build_app(
     @app.get("/_probe")
     async def probe(ctx: AdminContext = Depends(build_admin_context)):
         return {
-            "user_id": ctx.user.id if ctx.user else None,
-            "user_email": ctx.user.email if ctx.user else None,
+            "principal_id": ctx.principal.id if ctx.principal else None,
+            "principal_email": ctx.principal.email if ctx.principal else None,
             "tenant_slug": ctx.tenant.slug if ctx.tenant else None,
             "permissions": sorted(ctx.permissions),
             "is_authenticated": ctx.is_authenticated,
@@ -126,7 +126,7 @@ def test_external_providers_round_trip(tmp_path):
     A real Google OAuth integration would replace these four fakes with
     real adapters; nothing else in the framework needs to change.
     """
-    user = AdminUser(id="ext-1", email="alice@google.example", display_name="Alice")
+    user = AdminPrincipal(id="ext-1", email="alice@google.example", display_name="Alice")
     auth = _StaticAuthProvider(user_id=user.id, claims={"iss": "google"})
     users = _StaticUserProvider(user)
     perms = _StaticPermissionProvider(frozenset({"admin.posts.list", "admin.posts.read"}))
@@ -144,8 +144,8 @@ def test_external_providers_round_trip(tmp_path):
         # Without the fake credential header, the auth provider returns None.
         anon = client.get("/_probe").json()
         assert anon == {
-            "user_id": None,
-            "user_email": None,
+            "principal_id": None,
+            "principal_email": None,
             "tenant_slug": "acme",
             "permissions": [],
             "is_authenticated": False,
@@ -155,8 +155,8 @@ def test_external_providers_round_trip(tmp_path):
         # With the credential header, the full context is assembled.
         authed = client.get("/_probe", headers={"x-fake-auth": "yes"}).json()
         assert authed == {
-            "user_id": "ext-1",
-            "user_email": "alice@google.example",
+            "principal_id": "ext-1",
+            "principal_email": "alice@google.example",
             "tenant_slug": "acme",
             "permissions": ["admin.posts.list", "admin.posts.read"],
             "is_authenticated": True,
@@ -167,7 +167,7 @@ def test_external_providers_round_trip(tmp_path):
 
 
 def test_external_superadmin_grants_wildcard(tmp_path):
-    user = AdminUser(id="su-1", email="root@google.example", is_superadmin=True)
+    user = AdminPrincipal(id="su-1", email="root@google.example", is_superadmin=True)
     auth = _StaticAuthProvider(user_id=user.id)
     users = _StaticUserProvider(user)
     perms = _StaticPermissionProvider(frozenset())  # no app-defined perms
