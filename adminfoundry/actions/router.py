@@ -17,16 +17,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from adminfoundry.actions import AdminAction
+from adminfoundry.admin.context import AdminContext, require_admin_context
 from adminfoundry.audit import (
     ADMIN_ACTION,
     record_audit_in_session,
     request_audit_kwargs,
 )
-from adminfoundry.auth.dependencies import get_current_user
 from adminfoundry.authz.permissions import permission_key
 from adminfoundry.crud.query import coerce_primary_key_value, primary_key_column
 from adminfoundry.db.dependencies import get_async_session
-from adminfoundry.models.user import User
 from adminfoundry.registry import ModelAdmin
 from adminfoundry.security.validation import (
     InvalidActionNameError,
@@ -34,8 +33,6 @@ from adminfoundry.security.validation import (
     validate_action_name,
     validate_resource_name,
 )
-from adminfoundry.tenancy.context import TenantAuthContext
-from adminfoundry.tenancy.dependencies import require_tenant_auth_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -72,14 +69,14 @@ def _resolve_action(admin: ModelAdmin, action_name: str) -> AdminAction:
 
 
 def _require_permission(
-    auth: TenantAuthContext | None,
+    ctx: AdminContext,
     resource: str,
     action: str,
 ) -> None:
-    if auth is None:
+    if ctx.tenant is None:
         return  # root panel (superadmin) or no tenant context
     required = permission_key(resource, action)
-    if not auth.has_permission(required):
+    if not ctx.has_permission(required):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Missing required permission: {required}",
@@ -107,14 +104,16 @@ async def run_action(
     payload: ActionRequest,
     request: Request,
     session: AsyncSession = Depends(get_async_session),
-    auth: TenantAuthContext | None = Depends(require_tenant_auth_context),
-    current_user: User = Depends(get_current_user),
+    ctx: AdminContext = Depends(require_admin_context),
 ) -> dict[str, Any]:
     admin = _resolve_admin(request, resource)
     action_instance = _resolve_action(admin, action)
-    _require_permission(auth, admin.model_name, action_instance.name)
+    _require_permission(ctx, admin.model_name, action_instance.name)
     records = await _resolve_records(session, admin, payload.ids)
-    result = await action_instance.execute(records, session, current_user)
+    # Actions historically receive the legacy User; AdminUser is the
+    # neutral DTO. Pass ctx.user through — custom actions that only read
+    # ``.id`` / ``.email`` / ``.is_superadmin`` keep working unchanged.
+    result = await action_instance.execute(records, session, ctx.user)
     if not isinstance(result, dict):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -124,9 +123,9 @@ async def run_action(
         await record_audit_in_session(
             session,
             action=ADMIN_ACTION,
-            actor=current_user,
+            actor=ctx.user,
             resource=admin.model_name,
-            tenant_id=auth.tenant.id if auth is not None else None,
+            tenant_id=ctx.tenant.id if ctx.tenant is not None else None,
             changes={
                 "action": action_instance.name,
                 "ids": [str(i) for i in payload.ids],
