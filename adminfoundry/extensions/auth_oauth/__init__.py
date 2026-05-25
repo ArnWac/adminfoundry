@@ -81,6 +81,15 @@ from adminfoundry.extensions.auth_oauth.mappers import GoogleOIDCClaimMapper
 from adminfoundry.extensions.auth_oauth.models import ExternalIdentity
 from adminfoundry.extensions.auth_oauth.providers import GoogleOIDCProvider
 from adminfoundry.extensions.auth_oauth.router import build_oauth_router
+from adminfoundry.extensions.auth_oauth.user_provider import (
+    BuiltinOAuthUserProvider,
+    OAuthAutoCreateDisabledError,
+    OAuthCapabilityError,
+    OAuthCapableUserProvider,
+    OAuthEmailCollisionError,
+    OAuthEmailNotVerifiedError,
+    OAuthUserInactiveError,
+)
 from adminfoundry.extensions.base import AdminExtension
 from adminfoundry.extensions.context import ExtensionContext
 
@@ -125,7 +134,13 @@ class OAuthExtension(AdminExtension):
 
     name = "auth_oauth"
 
-    def __init__(self, *, providers: list[OAuthProvider] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        providers: list[OAuthProvider] | None = None,
+        user_provider: OAuthCapableUserProvider | None = None,
+        auto_create_users: bool = False,
+    ) -> None:
         self._providers: list[OAuthProvider] = list(providers or [])
         seen_ids: set[str] = set()
         for prov in self._providers:
@@ -138,6 +153,15 @@ class OAuthExtension(AdminExtension):
         # ``register_contract_contributions`` (called immediately after)
         # to build absolute login URLs.
         self._cached_auth_prefix: str = "/api/v1/auth"
+        # Identity write path. Defaults to the framework's built-in
+        # User model; apps with their own identity system pass a
+        # custom OAuthCapableUserProvider here. Lookup-only by default
+        # — auto-create requires an explicit opt-in by the operator
+        # (see the dataclass / Phase 8b.6 security defaults).
+        self._user_provider: OAuthCapableUserProvider = (
+            user_provider or BuiltinOAuthUserProvider()
+        )
+        self._auto_create_users: bool = auto_create_users
 
     # ---- Phase 5 lifecycle hooks ----
 
@@ -195,15 +219,30 @@ class OAuthExtension(AdminExtension):
     def providers(self) -> tuple[OAuthProvider, ...]:
         return tuple(self._providers)
 
+    @property
+    def user_provider(self) -> OAuthCapableUserProvider:
+        return self._user_provider
+
+    @property
+    def auto_create_users(self) -> bool:
+        return self._auto_create_users
+
 
 __all__ = [
+    "BuiltinOAuthUserProvider",
     "ExternalIdentity",
     "ExternalIdentityData",
     "GoogleOIDCClaimMapper",
     "GoogleOIDCProvider",
     "InvalidClaimsError",
+    "OAuthAutoCreateDisabledError",
+    "OAuthCapabilityError",
+    "OAuthCapableUserProvider",
+    "OAuthEmailCollisionError",
+    "OAuthEmailNotVerifiedError",
     "OAuthExtension",
     "OAuthProvider",
     "OAuthProviderConfig",
+    "OAuthUserInactiveError",
     "OIDCClaimMapper",
 ]
