@@ -144,6 +144,17 @@ h3 { font-size: 0.95rem; margin: 0 0 0.5rem; font-weight: 600; }
   color: var(--sidebar-fg-muted);
 }
 
+/* Extension-contributed nav items — sit below the models list, do not
+ * expand to absorb spare vertical space, and pick up a thin divider so
+ * the boundary between framework models and extension surfaces is
+ * visually obvious. */
+.sidebar-nav--extensions {
+  flex: 0 0 auto;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--sidebar-divider);
+}
+
 .sidebar-footer {
   flex-shrink: 0;
   padding-top: 1rem;

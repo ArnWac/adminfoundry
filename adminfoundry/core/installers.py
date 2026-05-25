@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from adminfoundry.actions.router import router as actions_router
+from adminfoundry.admin.navigation_router import router as navigation_router
 from adminfoundry.auth.router import router as auth_router
 from adminfoundry.contract.router import router as contract_router
 from adminfoundry.core.config import CoreAdminConfig
@@ -76,6 +77,15 @@ def install_routes(
         contract_router,
         prefix=config.admin_api_prefix,
         tags=["admin-contract"],
+    )
+
+    # Per-user navigation (extension-contributed items, permission-filtered).
+    # Mounted on the same admin prefix so the UI can hit /_navigation as a
+    # sibling of /_contract — see adminfoundry/admin/navigation_router.py.
+    app.include_router(
+        navigation_router,
+        prefix=config.admin_api_prefix,
+        tags=["admin-navigation"],
     )
 
     # Superadmin-only root routes — never use tenant middleware /

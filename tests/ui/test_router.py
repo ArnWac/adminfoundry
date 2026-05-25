@@ -72,6 +72,11 @@ def test_dashboard_renders_shell(client):
     assert 'class="layout"' in body
     assert 'class="sidebar"' in body
     assert 'id="sidebar-nav"' in body
+    # Phase 9: extension-contributed nav items live in their own list
+    # below the models. Server template must reserve the slot even when
+    # no extensions are loaded — admin.js reveals it after fetching
+    # /_navigation.
+    assert 'id="sidebar-extensions"' in body
     assert 'id="user-ctx"' in body
     assert 'id="signout"' in body
     assert 'id="breadcrumb"' in body
