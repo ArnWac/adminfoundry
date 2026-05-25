@@ -37,6 +37,8 @@ Example::
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
+from typing import Any
 
 from fastapi import FastAPI
 
@@ -74,6 +76,39 @@ class AdminExtension:
 
     def register_navigation(self, registry) -> None:
         """Add permission-gated nav items to the admin UI."""
+
+    def register_models(self) -> Iterable[type[Any]]:
+        """Declare ORM model classes this extension contributes.
+
+        The framework returns an iterable of model classes (typically
+        :class:`adminfoundry.models.base.GlobalBase` subclasses). They
+        register themselves with the shared metadata at *class*
+        definition time — this hook's job is to:
+
+        1. **Force the import.** The framework calls this during setup,
+           so referring to ``MyModel`` here makes Python evaluate the
+           model module and attach the ``Table`` to
+           ``GlobalBase.metadata``. Without that, tests that call
+           ``metadata.create_all`` and migrations that autogenerate
+           wouldn't see the table.
+        2. **Document ownership.** The framework stores the returned
+           classes on the runtime, so tooling can answer "which models
+           came from which extension" without grep.
+
+        Default returns an empty tuple. Extensions that ship database
+        models override::
+
+            def register_models(self):
+                from adminfoundry.extensions.auth_oauth import models
+                return (models.ExternalIdentity,)
+
+        Migration generation: the user is responsible for importing
+        their configured extensions in ``migrations/shared/env.py`` so
+        autogenerate sees the tables. The framework cannot do this
+        automatically because the extension list lives on the
+        ``create_admin()`` call, not in a global registry.
+        """
+        return ()
 
     def register_routes(self, app: FastAPI, ctx: ExtensionContext) -> None:
         """Mount routes / sub-routers on ``app``.

@@ -105,7 +105,7 @@ def create_admin(
         protected_fields=runtime.protected_fields,
         logger=logging.getLogger("adminfoundry.extensions"),
     )
-    run_setup_phase(runtime.extensions, ctx, app)
+    runtime.extension_models = run_setup_phase(runtime.extensions, ctx, app)
 
     install_routes(app, config)
 

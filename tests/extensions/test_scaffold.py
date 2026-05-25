@@ -28,6 +28,7 @@ from adminfoundry.extensions import (
     ExtensionRegistry,
     RegistryFrozenError,
 )
+from adminfoundry.models.base import GlobalBase
 from adminfoundry.security.protected_fields import reset_for_tests as reset_protected
 
 
@@ -43,6 +44,34 @@ class Thing(_Base):
 
 class ThingAdmin(ModelAdmin):
     model = Thing
+
+
+# Phase-8b.1 model fixtures. Module-level so SQLAlchemy can resolve
+# ``Mapped[…]`` annotations — defining these inside a test function would
+# trigger MappedAnnotationError because the annotation eval happens in the
+# function's local scope, not the module's.
+class _PhaseB1Widget(GlobalBase):
+    __tablename__ = "phase_8b1_widgets"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    label = Column(String(50))
+
+
+class _PhaseB1Gadget(GlobalBase):
+    __tablename__ = "phase_8b1_gadgets"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    sku = Column(String(50))
+
+
+class _PhaseB1ModelA(GlobalBase):
+    __tablename__ = "phase_8b1_a"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(50))
+
+
+class _PhaseB1ModelB(GlobalBase):
+    __tablename__ = "phase_8b1_b"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(50))
 
 
 @pytest.fixture(autouse=True)
@@ -144,6 +173,10 @@ def test_extension_hooks_called_in_documented_order(tmp_path):
         def register_navigation(self, registry):
             call_log.append("register_navigation")
 
+        def register_models(self):
+            call_log.append("register_models")
+            return ()
+
         def register_routes(self, app, ctx):
             call_log.append("register_routes")
             assert isinstance(ctx, ExtensionContext)
@@ -160,6 +193,7 @@ def test_extension_hooks_called_in_documented_order(tmp_path):
         "register_protected_fields",
         "register_contract_contributions",
         "register_navigation",
+        "register_models",
         "register_routes",
     ]
 
@@ -343,3 +377,62 @@ def test_shutdown_exceptions_are_swallowed(tmp_path):
     # no exception to propagate — the warning is logged but swallowed.
     with TestClient(app, raise_server_exceptions=False):
         pass  # exits cleanly
+
+
+# --- register_models (Phase 8b.1) ---
+
+
+def test_register_models_default_returns_empty_tuple(tmp_path):
+    """Extensions that don't ship DB models inherit the no-op default."""
+    app = create_admin(
+        config=_config(tmp_path),
+        extensions=[type("X", (AdminExtension,), {"name": "x"})()],
+    )
+    assert app.state.adminfoundry.extension_models == ()
+
+
+def test_register_models_collects_returned_classes_onto_runtime(tmp_path):
+    """The hook's return value lands on runtime.extension_models so tooling
+    can answer 'which extension owns table X' without grep."""
+
+    class WidgetExt(AdminExtension):
+        name = "widget_ext"
+
+        def register_models(self):
+            return (_PhaseB1Widget,)
+
+    app = create_admin(config=_config(tmp_path), extensions=[WidgetExt()])
+    assert app.state.adminfoundry.extension_models == (_PhaseB1Widget,)
+
+
+def test_register_models_table_attached_to_shared_metadata(tmp_path):
+    """The whole point of the hook: a model declared by an extension and
+    returned from register_models is reachable from GlobalBase.metadata,
+    so create_all + autogenerate see it."""
+    from adminfoundry.models.base import GlobalBase
+
+    class GadgetExt(AdminExtension):
+        name = "gadget_ext"
+
+        def register_models(self):
+            return (_PhaseB1Gadget,)
+
+    create_admin(config=_config(tmp_path), extensions=[GadgetExt()])
+    assert "public.phase_8b1_gadgets" in GlobalBase.metadata.tables
+
+
+def test_register_models_flattens_across_extensions(tmp_path):
+    class ExtA(AdminExtension):
+        name = "ext_a"
+
+        def register_models(self):
+            return (_PhaseB1ModelA,)
+
+    class ExtB(AdminExtension):
+        name = "ext_b"
+
+        def register_models(self):
+            return (_PhaseB1ModelB,)
+
+    app = create_admin(config=_config(tmp_path), extensions=[ExtA(), ExtB()])
+    assert app.state.adminfoundry.extension_models == (_PhaseB1ModelA, _PhaseB1ModelB)

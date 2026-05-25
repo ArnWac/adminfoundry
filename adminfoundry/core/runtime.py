@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from adminfoundry.authz.registry import PermissionRegistry
 from adminfoundry.contract.contributions import ContractContributionRegistry
@@ -76,6 +77,11 @@ class AdminRuntime:
         default_factory=ContractContributionRegistry
     )
     navigation: NavigationRegistry = field(default_factory=NavigationRegistry)
+    #: ORM model classes contributed by extensions (populated during
+    #: ``register_models``). Tooling can iterate this to answer "which
+    #: extension owns table X". Table registration itself happens at
+    #: class-definition time on the shared :class:`GlobalBase.metadata`.
+    extension_models: tuple[type[Any], ...] = field(default_factory=tuple)
 
 
 def get_runtime(app) -> AdminRuntime:

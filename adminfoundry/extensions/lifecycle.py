@@ -36,7 +36,7 @@ def run_setup_phase(
     extensions: ExtensionRegistry,
     ctx: ExtensionContext,
     app: FastAPI,
-) -> None:
+) -> tuple[type, ...]:
     """Walk every extension through the synchronous setup hooks.
 
     Order matches the AdminExtension docstring:
@@ -46,9 +46,12 @@ def run_setup_phase(
     3. ``register_protected_fields``
     4. ``register_contract_contributions``
     5. ``register_navigation``
-    6. ``register_routes``  ← only step that gets ``app``
+    6. ``register_models``       ← side-effect: forces import + collects classes
+    7. ``register_routes``       ← only step that gets ``app``
 
-    After this returns, every extension-side registry is frozen.
+    After this returns, every extension-side registry is frozen. The
+    flattened tuple of extension-contributed model classes is returned
+    so the caller can stash it on :class:`AdminRuntime`.
     """
     # Step 1: configure — give every extension a chance to reject the
     # config before we mount routes.
@@ -65,7 +68,16 @@ def run_setup_phase(
     for ext in extensions:
         ext.register_navigation(ctx.navigation)
 
-    # Step 6: routes. ``app`` is intentionally only available here.
+    # Step 6: model declarations. Calling the hook forces the import of
+    # the extension's model module, which is what actually attaches
+    # the ``Table`` objects to the shared metadata. We flatten the
+    # results into a single tuple for runtime introspection.
+    collected_models: list[type] = []
+    for ext in extensions:
+        for model in ext.register_models():
+            collected_models.append(model)
+
+    # Step 7: routes. ``app`` is intentionally only available here.
     for ext in extensions:
         ext.register_routes(app, ctx)
 
@@ -76,6 +88,8 @@ def run_setup_phase(
     ctx.contract.freeze()
     ctx.navigation.freeze()
     extensions.freeze()
+
+    return tuple(collected_models)
 
 
 def compose_lifespan(
