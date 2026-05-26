@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from adminfoundry.actions.router import router as actions_router
+from adminfoundry.admin.login_contract_router import router as login_contract_router
 from adminfoundry.admin.navigation_router import router as navigation_router
 from adminfoundry.auth.router import router as auth_router
 from adminfoundry.contract.router import router as contract_router
@@ -86,6 +87,17 @@ def install_routes(
         navigation_router,
         prefix=config.admin_api_prefix,
         tags=["admin-navigation"],
+    )
+
+    # Anonymous-readable login-page metadata (OAuth provider buttons).
+    # Mounted on the admin prefix so the path layout stays consistent;
+    # the endpoint itself does not require auth. See
+    # adminfoundry/admin/login_contract_router.py for why this is a
+    # narrow public surface rather than widening /_contract.
+    app.include_router(
+        login_contract_router,
+        prefix=config.admin_api_prefix,
+        tags=["admin-login-contract"],
     )
 
     # Superadmin-only root routes — never use tenant middleware /

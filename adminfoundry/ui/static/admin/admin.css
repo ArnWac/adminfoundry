@@ -355,6 +355,38 @@ td a { color: var(--accent); }
   border-color: var(--danger);
 }
 .btn-danger:hover { background: #962a20; }
+
+/* --- OAuth providers (login page) --- */
+.oauth-providers {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.oauth-divider {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0;
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  position: relative;
+}
+.oauth-divider::before,
+.oauth-divider::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 30%;
+  border-top: 1px solid var(--border);
+}
+.oauth-divider::before { left: 0; }
+.oauth-divider::after { right: 0; }
+.btn-oauth {
+  text-align: center;
+  padding: 0.55rem 0.85rem;
+}
 .btn-link {
   border: none;
   background: transparent;

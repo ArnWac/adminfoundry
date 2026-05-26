@@ -124,6 +124,41 @@ def test_resource_delete_renders_shell(client):
     assert 'data-view="delete"' in resp.text
 
 
+# --- OAuth fragment-redirect landing page (Phase 8b.8) ---
+
+
+def test_login_complete_page_renders_standalone_shell(client):
+    """Standalone page (NOT app.html) so the JS runs BEFORE the
+    'no token? go to /login' redirect in admin.js — at this point in
+    the OAuth flow, localStorage has no token yet."""
+    resp = client.get("/admin/login-complete")
+    assert resp.status_code == 200
+    assert 'data-view="login-complete"' in resp.text
+    # Standalone shell — no sidebar.
+    assert 'class="sidebar"' not in resp.text
+    assert 'class="login-wrap"' in resp.text
+    # The fragment carries the JWT; this is the page that reads it.
+    assert 'id="login-complete-status"' in resp.text
+
+
+def test_login_complete_page_blocks_search_indexing(client):
+    """The landing page never carries data on its own, but its URL is
+    /admin/login-complete — exclude from search engines anyway."""
+    resp = client.get("/admin/login-complete")
+    assert 'name="robots"' in resp.text
+    assert 'noindex' in resp.text.lower()
+    assert 'name="referrer"' in resp.text
+    assert 'no-referrer' in resp.text
+
+
+def test_login_page_includes_oauth_providers_slot(client):
+    """The login page reserves a slot the JS fills from
+    /_login_contract — assert the slot exists on the static template
+    so the JS has something to populate."""
+    resp = client.get("/admin/login")
+    assert 'id="oauth-providers"' in resp.text
+
+
 # --- static asset mount ---
 
 
@@ -148,11 +183,15 @@ def test_static_unknown_returns_404(client):
 
 
 def test_only_minimal_templates_exist():
-    """Plan §Phase 4: 'They should only render: ui/templates/app.html,
-    ui/templates/login.html'. Guards against legacy templates returning."""
+    """Guards against legacy templates returning.
+
+    Phase 8b.8 added login_complete.html as the landing page for the
+    OAuth fragment redirect — it's a sibling of login.html, NOT a
+    view inside app.html (the JWT-in-fragment trick needs a standalone
+    page that runs before the normal authenticated-view shell)."""
     templates_dir = PACKAGE_ROOT / "ui" / "templates"
     files = sorted(p.name for p in templates_dir.iterdir() if p.is_file())
-    assert files == ["app.html", "login.html"], files
+    assert files == ["app.html", "login.html", "login_complete.html"], files
 
 
 def test_no_admin_subdirectory_left():
@@ -185,6 +224,7 @@ def test_static_admin_layout():
         "import_modal.js",
         "list.js",
         "login.js",
+        "login_complete.js",
         "settings.js",
     ], view_files
 

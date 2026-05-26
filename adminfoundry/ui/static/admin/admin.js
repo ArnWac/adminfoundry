@@ -17,6 +17,8 @@ const cfg = window.ADMINFOUNDRY || {};
 
 const viewLoaders = {
   login: () => import("./views/login.js").then((m) => m.mountLogin()),
+  "login-complete": () =>
+    import("./views/login_complete.js").then((m) => m.mountLoginComplete()),
   dashboard: (root) => import("./views/dashboard.js").then((m) => m.mountDashboard(root)),
   list: (root) => import("./views/list.js").then((m) => m.mountList(root, cfg.resource)),
   detail: (root) =>
@@ -35,6 +37,15 @@ async function main() {
 
   if (view === "login") {
     await viewLoaders.login();
+    return;
+  }
+
+  // login-complete runs BEFORE the not-logged-in redirect: at this
+  // point tokenStore is empty by definition (the OAuth flow just
+  // landed here to populate it). The view mounts, reads the fragment,
+  // and either stores+redirects or bails to /login on its own.
+  if (view === "login-complete") {
+    await viewLoaders["login-complete"]();
     return;
   }
 

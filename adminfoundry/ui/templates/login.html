@@ -26,6 +26,13 @@
         </label>
         <button type="submit" class="btn btn-primary">Sign in</button>
       </form>
+
+      <!-- Extension-contributed OAuth buttons render here. login.js
+           fetches /api/v1/admin/_login_contract anonymously and
+           populates this slot; it stays hidden when no providers are
+           configured (e.g. when the auth_oauth extension isn't wired
+           in). -->
+      <div id="oauth-providers" class="oauth-providers" hidden></div>
     </div>
   </div>
 
