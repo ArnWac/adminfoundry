@@ -9,7 +9,7 @@
 // sidebar resource navigation, the bottom user line, and an
 // unauthenticated -> /login redirect for app pages.
 
-import { APIError, auth, tokenStore } from "./api.js";
+import { admin, APIError, auth, tokenStore } from "./api.js";
 import { getFullContract } from "./contract.js";
 import { el, mount, showToast } from "./dom.js";
 
@@ -17,6 +17,8 @@ const cfg = window.ADMINFOUNDRY || {};
 
 const viewLoaders = {
   login: () => import("./views/login.js").then((m) => m.mountLogin()),
+  "login-complete": () =>
+    import("./views/login_complete.js").then((m) => m.mountLoginComplete()),
   dashboard: (root) => import("./views/dashboard.js").then((m) => m.mountDashboard(root)),
   list: (root) => import("./views/list.js").then((m) => m.mountList(root, cfg.resource)),
   detail: (root) =>
@@ -38,6 +40,15 @@ async function main() {
     return;
   }
 
+  // login-complete runs BEFORE the not-logged-in redirect: at this
+  // point tokenStore is empty by definition (the OAuth flow just
+  // landed here to populate it). The view mounts, reads the fragment,
+  // and either stores+redirects or bails to /login on its own.
+  if (view === "login-complete") {
+    await viewLoaders["login-complete"]();
+    return;
+  }
+
   if (!tokenStore.isLoggedIn()) {
     window.location.href = `${cfg.uiPath}/login`;
     return;
@@ -46,6 +57,7 @@ async function main() {
   wireSignout();
   // Sidebar nav + user line are non-essential; failure shouldn't break the view.
   populateSidebarNav().catch(() => {});
+  populateSidebarExtensions().catch(() => {});
   populateUserLine().catch(() => {});
   highlightSettingsLink();
 
@@ -110,6 +122,39 @@ async function populateSidebarNav() {
     return;
   }
   nav.replaceChildren(...items);
+}
+
+async function populateSidebarExtensions() {
+  // Phase 9: render extension-contributed nav items in their own list,
+  // below the model list. The server has already filtered to items the
+  // current principal can see — no client-side permission check needed.
+  const list = document.getElementById("sidebar-extensions");
+  if (!list) return;
+  const { items = [] } = await admin.navigation();
+  if (items.length === 0) {
+    // No extension items for this principal — leave the section hidden so
+    // the sidebar isn't polluted with an empty "Extensions" header.
+    return;
+  }
+
+  const currentPath = window.location.pathname;
+  const header = el(
+    "li",
+    {},
+    el("span", { class: "nav-section-label" }, "Extensions"),
+  );
+
+  const links = items.map((it) => {
+    const link = el("a", { href: it.path }, it.label);
+    if (currentPath === it.path) {
+      link.setAttribute("aria-current", "page");
+      link.classList.add("active");
+    }
+    return el("li", {}, link);
+  });
+
+  list.replaceChildren(header, ...links);
+  list.hidden = false;
 }
 
 async function populateUserLine() {

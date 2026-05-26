@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from adminfoundry import CoreAdminConfig, create_admin
-from adminfoundry.extensions.import_export import register as import_export
+from adminfoundry.extensions.import_export import ImportExportExtension
 from examples.basic_single.admin_config import register
 from examples.basic_single.seed import print_banner, seed
 
@@ -41,6 +41,6 @@ async def lifespan(app: FastAPI):
 app = create_admin(
     config=config,
     register=register,
-    extensions=[import_export],
+    extensions=[ImportExportExtension()],
     lifespan=lifespan,
 )

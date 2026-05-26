@@ -84,6 +84,9 @@ export const auth = {
 export const admin = {
   contract: () => request("GET", `${cfg.adminPrefix}/_contract`),
   contractFor: (resource) => request("GET", `${cfg.adminPrefix}/_contract/${resource}`),
+  // Per-user navigation: only items the principal has permission to use.
+  // Returns { items: [{id, label, path}, ...] }. Extension-contributed.
+  navigation: () => request("GET", `${cfg.adminPrefix}/_navigation`),
 
   list: (resource, { limit = 25, offset = 0, search = "" } = {}) => {
     const qs = new URLSearchParams({ limit, offset });

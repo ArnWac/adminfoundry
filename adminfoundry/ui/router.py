@@ -76,6 +76,23 @@ async def ui_login(request: Request):
     )
 
 
+@router.get("/login-complete", response_class=HTMLResponse, include_in_schema=False)
+async def ui_login_complete(request: Request):
+    """Landing page for the OAuth fragment-redirect.
+
+    The OAuth callback ends with ``302 /admin/login-complete#token=…``
+    so the JWT lives in the URL fragment (never the query string).
+    This page's JS reads it, stores it under the same localStorage
+    key the rest of the UI uses, replaces the URL to clear the
+    fragment, and bounces to ``return_to``.
+    """
+    return templates.TemplateResponse(
+        request,
+        "login_complete.html",
+        _template_context(request, view="login-complete"),
+    )
+
+
 @router.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 async def ui_dashboard(request: Request):
     return _app(request, view="dashboard")

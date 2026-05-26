@@ -41,10 +41,9 @@ from fastapi import (
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from adminfoundry.admin.context import AdminContext, require_admin_context
 from adminfoundry.audit import record_audit_in_session, request_audit_kwargs
-from adminfoundry.auth.dependencies import get_current_user
 from adminfoundry.authz.permissions import permission_key
-from adminfoundry.core.config import CoreAdminConfig
 from adminfoundry.crud.payload import clean_write_payload
 from adminfoundry.crud.query import (
     apply_ordering,
@@ -53,16 +52,13 @@ from adminfoundry.crud.query import (
     primary_key_column,
 )
 from adminfoundry.db.dependencies import get_async_session
-from adminfoundry.models.user import User
-from adminfoundry.registry import AdminRegistry, ModelAdmin
+from adminfoundry.registry import ModelAdmin
 from adminfoundry.schemas.builder import build_model_schema
 from adminfoundry.schemas.serialization.serializer import serialize_records
 from adminfoundry.security.validation import (
     InvalidResourceNameError,
     validate_resource_name,
 )
-from adminfoundry.tenancy.context import TenantAuthContext
-from adminfoundry.tenancy.dependencies import require_tenant_auth_context
 
 logger = logging.getLogger(__name__)
 
@@ -101,11 +97,11 @@ def _resolve_admin(request: Request, resource: str) -> type[ModelAdmin]:
     return admin
 
 
-def _require_list_permission(auth: TenantAuthContext | None, resource: str) -> None:
-    if auth is None:
+def _require_list_permission(ctx: AdminContext, resource: str) -> None:
+    if ctx.tenant is None:
         return  # superadmin / no tenant context — handled by the request-time gate
     required = permission_key(resource, "list")
-    if not auth.has_permission(required):
+    if not ctx.has_permission(required):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Missing required permission: {required}",
@@ -192,8 +188,7 @@ async def export_records(
     limit: int = MAX_EXPORT_ROWS,
     ids: list[str] = Query(default_factory=list),
     session: AsyncSession = Depends(get_async_session),
-    auth: TenantAuthContext | None = Depends(require_tenant_auth_context),
-    current_user: User = Depends(get_current_user),
+    ctx: AdminContext = Depends(require_admin_context),
 ) -> Response:
     if format not in SUPPORTED_EXPORT_FORMATS:
         raise HTTPException(
@@ -205,7 +200,7 @@ async def export_records(
         )
 
     admin = _resolve_admin(request, resource)
-    _require_list_permission(auth, admin.model_name)
+    _require_list_permission(ctx, admin.model_name)
 
     capped_limit = max(1, min(int(limit), MAX_EXPORT_ROWS))
 
@@ -256,9 +251,9 @@ async def export_records(
         await record_audit_in_session(
             session,
             action=EXPORT_AUDIT_ACTION,
-            actor=current_user,
+            actor=ctx.principal,
             resource=admin.model_name,
-            tenant_id=auth.tenant.id if auth is not None else None,
+            tenant_id=ctx.tenant.id if ctx.tenant is not None else None,
             changes={
                 "rows": len(rows),
                 "format": format,
@@ -285,11 +280,11 @@ async def export_records(
 # ---------------------------------------------------------------------------
 
 
-def _require_create_permission(auth: TenantAuthContext | None, resource: str) -> None:
-    if auth is None:
+def _require_create_permission(ctx: AdminContext, resource: str) -> None:
+    if ctx.tenant is None:
         return
     required = permission_key(resource, "create")
-    if not auth.has_permission(required):
+    if not ctx.has_permission(required):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Missing required permission: {required}",
@@ -378,11 +373,10 @@ async def import_records(
     request: Request,
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_async_session),
-    auth: TenantAuthContext | None = Depends(require_tenant_auth_context),
-    current_user: User = Depends(get_current_user),
+    ctx: AdminContext = Depends(require_admin_context),
 ) -> dict[str, Any]:
     admin = _resolve_admin(request, resource)
-    _require_create_permission(auth, admin.model_name)
+    _require_create_permission(ctx, admin.model_name)
 
     filename = file.filename or "upload"
     fmt = _detect_import_format(filename)
@@ -430,9 +424,9 @@ async def import_records(
         await record_audit_in_session(
             session,
             action=IMPORT_AUDIT_ACTION,
-            actor=current_user,
+            actor=ctx.principal,
             resource=admin.model_name,
-            tenant_id=auth.tenant.id if auth is not None else None,
+            tenant_id=ctx.tenant.id if ctx.tenant is not None else None,
             changes={
                 "created": created,
                 "failed": failed,
@@ -455,9 +449,3 @@ async def import_records(
     }
 
 
-def register(registry: AdminRegistry, app, config: CoreAdminConfig) -> None:
-    """Extension entry point — mount the export+import router under the admin prefix."""
-    # ``registry`` is unused at registration time but kept in the signature
-    # so the function matches the :data:`adminfoundry.extensions.Extension` shape.
-    del registry
-    app.include_router(router, prefix=config.admin_api_prefix, tags=["admin-import-export"])
