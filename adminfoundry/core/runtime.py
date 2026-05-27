@@ -8,6 +8,7 @@ from adminfoundry.contract.contributions import ContractContributionRegistry
 from adminfoundry.core.config import CoreAdminConfig
 from adminfoundry.db.session import DatabaseManager
 from adminfoundry.extensions.registry import ExtensionRegistry
+from adminfoundry.fields import FieldRegistry, build_default_registry
 from adminfoundry.providers.base import (
     AuthProvider,
     PermissionProvider,
@@ -63,6 +64,11 @@ class AdminRuntime:
     db: DatabaseManager
     registry: AdminRegistry = field(default_factory=AdminRegistry)
     providers: ProviderSet = field(default_factory=_default_providers)
+    #: Field adapter registry. Default-populated with the built-in scalar
+    #: and relation adapters; extensions can prepend custom adapters
+    #: during their setup phase. Read by ``schemas/builder.py`` and
+    #: ``contract/service.py`` to introspect model columns.
+    fields: FieldRegistry = field(default_factory=build_default_registry)
     #: Module-level singleton — every runtime references the same registry.
     #: Extension ``register_protected_fields`` hooks write into it before
     #: ``create_admin`` freezes it for the duration of the request lifecycle.

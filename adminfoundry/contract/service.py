@@ -1,14 +1,34 @@
-"""Contract building service: introspects ModelAdmin and SQLAlchemy models."""
+"""Contract building service: introspects ModelAdmin and SQLAlchemy models.
+
+A3 routed column-type detection through
+:mod:`adminfoundry.fields` — the inline ``_field_type`` switch is gone.
+A4 promotes the most-used adapter hints (``widget``, ``required``,
+``help_text``) into first-class :class:`FieldMeta` fields and adds a
+per-request :class:`CapabilitiesMeta` block driven by the caller's
+permission set. A5 adds a :class:`RelationMeta` list, introspected from
+``mapper.relationships``, so the UI can render lookup widgets and inline
+hints without making a separate metadata round-trip.
+
+Contract version stays at ``"2"`` for the A5 additions because the
+new ``relations`` field has a safe default (``[]``); clients that ignore
+unknown fields are unaffected.
+"""
 
 from __future__ import annotations
 
-import sqlalchemy.types as sqltypes
+from collections.abc import Collection
+from typing import TYPE_CHECKING, Any, Literal
+
 from pydantic import BaseModel
 from sqlalchemy import inspect as sa_inspect
 
-from adminfoundry.registry.admin import ModelAdmin
+from adminfoundry.fields import FieldRegistry, build_default_registry
+from adminfoundry.registry.admin import AUTO_FIELDS, ModelAdmin
 
-CONTRACT_VERSION = "1"
+if TYPE_CHECKING:
+    from adminfoundry.registry import AdminRegistry
+
+CONTRACT_VERSION = "2"
 
 CRUD_ACTIONS: tuple[str, ...] = ("list", "read", "create", "update", "delete")
 
@@ -21,11 +41,136 @@ class FieldMeta(BaseModel):
     hidden: bool = False
     nullable: bool = False
     calculated: bool = False
+    #: UI widget hint promoted from the field adapter's metadata.
+    #: ``None`` means "renderer picks a sensible default for ``type``".
+    widget: str | None = None
+    #: True when the create path requires this field. False for nullable
+    #: columns, columns with a default / server_default, primary keys
+    #: (server-generated), read-only fields, calculated fields. Update
+    #: schemas treat every field as optional regardless.
+    required: bool = False
+    #: Human-readable help text. Sourced from SQLAlchemy ``Column.doc``
+    #: when available; ``None`` otherwise.
+    help_text: str | None = None
+    #: Adapter-supplied or admin-supplied validation hints (e.g.
+    #: ``{"min_length": 1, "max_length": 200}``). Empty when the adapter
+    #: did not contribute any.
+    validation: dict[str, Any] = {}
+    #: Remaining adapter hints that did not get promoted to first-class
+    #: fields (``choices``, ``foreign_key``, future widget extras).
+    #: Pre-A4 clients can still read everything through this dict.
+    metadata: dict[str, Any] = {}
 
 
 class AdminActionMeta(BaseModel):
     name: str
     label: str
+
+
+RelationKind = Literal["belongs_to", "has_many", "many_to_many"]
+
+
+class RelationMeta(BaseModel):
+    """One SQLAlchemy ``relationship()`` mapping rendered for the UI.
+
+    * ``name`` — the attribute on the source model (e.g. ``"tenant"``,
+      ``"posts"``).
+    * ``kind`` — ``belongs_to`` (MANYTOONE), ``has_many`` (ONETOMANY),
+      or ``many_to_many`` (MANYTOMANY).
+    * ``target`` — the target model's ``__tablename__``. Always present,
+      even when the target is not registered as a ModelAdmin.
+    * ``target_registered`` — True when the target table is in the
+      :class:`~adminfoundry.registry.AdminRegistry`. UIs can use this to
+      decide whether to render a lookup link.
+    * ``local_columns`` — column names on the SOURCE side that
+      participate in the join (typically the FK columns for
+      ``belongs_to`` / the PK columns for ``has_many``).
+    * ``remote_columns`` — column names on the TARGET side (mirror of
+      ``local_columns``).
+    * ``secondary`` — assoc table name for ``many_to_many``; ``None``
+      for plain joins.
+    """
+
+    name: str
+    kind: RelationKind
+    target: str
+    target_registered: bool = False
+    local_columns: list[str] = []
+    remote_columns: list[str] = []
+    secondary: str | None = None
+
+
+class InlineMeta(BaseModel):
+    """Wire-format for one :class:`~adminfoundry.admin.inline.InlineAdmin`.
+
+    Mirrors what the UI needs to render the inline section:
+
+    * ``model`` — child table name (matches ``ModelContractMeta.resource``
+      for the child admin if the child is registered).
+    * ``fk_name`` — column on the child that points at the parent;
+      None when the inline did not declare one (the framework will
+      try to infer it in C2).
+    * ``label`` — section header.
+    * ``fields`` — ordered list of column names to render.
+    * ``readonly_fields`` — subset of ``fields`` that are non-editable.
+    * ``ordering`` — sort order for existing rows.
+    * ``extra``, ``max_num`` — UI capacity hints.
+    * ``can_delete`` — whether the row delete control is shown.
+    """
+
+    model: str
+    fk_name: str | None = None
+    label: str
+    fields: list[str] = []
+    readonly_fields: list[str] = []
+    ordering: list[str] = []
+    extra: int = 0
+    max_num: int | None = None
+    can_delete: bool = True
+
+
+class FieldsetMeta(BaseModel):
+    """Wire-format for one :class:`~adminfoundry.admin.fieldset.Fieldset`.
+
+    ``fields`` is the post-filter list — fields that didn't exist on
+    the model, or that were filtered by ``protected_fields``, are
+    dropped during build so the client can trust every name to be
+    renderable.
+    """
+
+    label: str
+    fields: list[str] = []
+    collapsed: bool = False
+    description: str | None = None
+
+
+class FilterMeta(BaseModel):
+    """Wire-format for one filterable column.
+
+    The contract surfaces the field name and the underlying column
+    type so the client can render a sensible widget (text input for
+    strings, dropdown for booleans, date picker for datetimes).
+    """
+
+    name: str
+    type: str
+    label: str | None = None
+
+
+class CapabilitiesMeta(BaseModel):
+    """What the current caller is allowed to do with this resource.
+
+    Computed from the caller's permission set when one is supplied to
+    :func:`build_model_contract`. With no permission set (e.g.
+    schema-only contract dumps, tests), all capabilities default to
+    ``True`` so the UI does not silently disable buttons because of a
+    missing context.
+    """
+
+    create: bool = True
+    update: bool = True
+    delete: bool = True
+    bulk_actions: list[str] = []
 
 
 class ModelContractMeta(BaseModel):
@@ -37,27 +182,141 @@ class ModelContractMeta(BaseModel):
     fields: list[FieldMeta]
     crud_actions: list[str]
     admin_actions: list[AdminActionMeta]
+    capabilities: CapabilitiesMeta
+    relations: list[RelationMeta] = []
+    fieldsets: list[FieldsetMeta] = []
+    inlines: list[InlineMeta] = []
+    filters: list[FilterMeta] = []
     list_display: list[str]
     search_fields: list[str]
     ordering: list[str]
 
 
-def _field_type(sa_type) -> str:
-    type_name = type(sa_type).__name__.lower()
-    if "uuid" in type_name or "guid" in type_name:
-        return "uuid"
-    if isinstance(sa_type, sqltypes.Boolean):
-        return "boolean"
-    if isinstance(sa_type, (sqltypes.BigInteger, sqltypes.SmallInteger, sqltypes.Integer)):
-        return "integer"
-    if isinstance(sa_type, (sqltypes.Float, sqltypes.Numeric)):
-        return "float"
-    if isinstance(sa_type, sqltypes.DateTime):
-        return "datetime"
-    return "string"
+# ---------------------------------------------------------------------------
+# Per-field helpers
+# ---------------------------------------------------------------------------
 
 
-def build_field_metadata(model_admin: ModelAdmin) -> list[FieldMeta]:
+def _column_is_required(col, *, readonly_set: set[str]) -> bool:
+    """Required = create-path mandatory.
+
+    A column is required iff: not nullable, no Python-side default, no
+    server-side default, not a primary key (server-generated), not in
+    the admin's readonly_fields, and not in the framework-generated
+    AUTO_FIELDS (``id``, ``created_at``, ``updated_at``).
+    """
+    if col.primary_key:
+        return False
+    if col.name in readonly_set:
+        return False
+    if col.name in AUTO_FIELDS:
+        return False
+    if col.default is not None or col.server_default is not None:
+        return False
+    return not bool(col.nullable)
+
+
+def _column_help_text(col) -> str | None:
+    """Pick up SQLAlchemy ``Column.doc`` as the help text.
+
+    ``Column.doc`` exists for exactly this purpose — it does not affect
+    the schema and rides through to the contract for free. Admins that
+    want richer help text per field will gain a ``help_texts`` mapping
+    on :class:`ModelAdmin` in a later phase.
+    """
+    doc = getattr(col, "doc", None)
+    if doc:
+        return str(doc)
+    return None
+
+
+def _split_widget_and_validation(metadata: dict[str, Any]) -> tuple[str | None, dict[str, Any], dict[str, Any]]:
+    """Separate the adapter metadata into promoted top-level fields and
+    the leftover ``metadata`` dict.
+
+    ``widget`` and any ``validation``-shaped keys (``min_length``,
+    ``max_length``, ``minimum``, ``maximum``, ``pattern``) get promoted.
+    Everything else stays in ``metadata`` so adapter authors can ship
+    bespoke hints without coordinating with this module.
+    """
+    promoted_widget = metadata.get("widget")
+    validation_keys = {"min_length", "max_length", "minimum", "maximum", "pattern"}
+    validation = {k: v for k, v in metadata.items() if k in validation_keys}
+    leftover = {k: v for k, v in metadata.items() if k != "widget" and k not in validation_keys}
+    return promoted_widget, validation, leftover
+
+
+def _field_meta_from_adapter(
+    col,
+    *,
+    registry: FieldRegistry,
+    readonly_set: set[str],
+) -> FieldMeta:
+    """Run a column through the registry and turn the resulting
+    :class:`FieldContract` into the wire-format :class:`FieldMeta`.
+
+    The registry's ``read_only`` flag only reflects column-level
+    constraints (primary keys). Admin-level overrides via
+    ``ModelAdmin.readonly_fields`` are layered on top here, because
+    only the caller knows about the admin.
+    """
+    adapter = registry.find_adapter(col)
+    if adapter is None:
+        # build_default_registry includes StringAdapter as the universal
+        # fallback, so this branch is only reachable if a caller passes
+        # an empty registry. Fall through to a minimal entry rather than
+        # raising — keeps the contract endpoint resilient against a
+        # misconfigured registry.
+        return FieldMeta(
+            name=col.name,
+            type="string",
+            primary_key=bool(col.primary_key),
+            read_only=bool(col.primary_key) or col.name in readonly_set,
+            hidden=False,
+            nullable=bool(col.nullable),
+            calculated=False,
+            widget=None,
+            required=_column_is_required(col, readonly_set=readonly_set),
+            help_text=_column_help_text(col),
+            validation={},
+            metadata={},
+        )
+
+    contract = adapter.build_contract(col)
+    widget, validation, leftover_metadata = _split_widget_and_validation(dict(contract.metadata))
+
+    return FieldMeta(
+        name=contract.name,
+        type=contract.type,
+        primary_key=contract.primary_key,
+        read_only=contract.read_only or contract.name in readonly_set,
+        hidden=contract.hidden,
+        nullable=contract.nullable,
+        calculated=contract.calculated,
+        widget=widget,
+        required=_column_is_required(col, readonly_set=readonly_set),
+        help_text=_column_help_text(col),
+        validation=validation,
+        metadata=leftover_metadata,
+    )
+
+
+def build_field_metadata(
+    model_admin: ModelAdmin,
+    *,
+    registry: FieldRegistry | None = None,
+) -> list[FieldMeta]:
+    """Build the list of :class:`FieldMeta` for one admin.
+
+    ``registry`` defaults to a fresh
+    :func:`~adminfoundry.fields.build_default_registry` — sufficient for
+    every column type used in core. Routers that have an
+    extension-augmented registry on the runtime pass it in to expose
+    extension-contributed adapters.
+    """
+    if registry is None:
+        registry = build_default_registry()
+
     mapper = sa_inspect(model_admin.model)
     protected = model_admin.all_protected
     readonly_set = set(model_admin.readonly_fields)
@@ -67,17 +326,8 @@ def build_field_metadata(model_admin: ModelAdmin) -> list[FieldMeta]:
     for col in mapper.columns:
         if col.name in protected:
             continue
-        is_pk = bool(col.primary_key)
         fields.append(
-            FieldMeta(
-                name=col.name,
-                type=_field_type(col.type),
-                primary_key=is_pk,
-                read_only=is_pk or col.name in readonly_set,
-                hidden=False,
-                nullable=bool(col.nullable),
-                calculated=False,
-            )
+            _field_meta_from_adapter(col, registry=registry, readonly_set=readonly_set)
         )
 
     for fname in model_admin.calculated_fields:
@@ -90,6 +340,11 @@ def build_field_metadata(model_admin: ModelAdmin) -> list[FieldMeta]:
                 hidden=False,
                 nullable=True,
                 calculated=True,
+                widget=None,
+                required=False,
+                help_text=None,
+                validation={},
+                metadata={},
             )
         )
 
@@ -102,16 +357,306 @@ def _admin_action_meta(action) -> AdminActionMeta:
     return AdminActionMeta(name=name, label=label)
 
 
-def build_model_contract(model_admin: ModelAdmin) -> ModelContractMeta:
+# ---------------------------------------------------------------------------
+# Capabilities
+# ---------------------------------------------------------------------------
+
+
+def _has(permissions: Collection[str] | None, resource: str, action: str) -> bool:
+    """Permission check for capability computation.
+
+    Returns ``True`` when ``permissions`` is None (no caller context —
+    we cannot narrow). Otherwise consults the wildcard-aware matcher
+    from :mod:`adminfoundry.authz.permissions`.
+    """
+    if permissions is None:
+        return True
+    from adminfoundry.authz.permissions import has_permission, permission_key
+
+    return has_permission(permissions, permission_key(resource, action))
+
+
+def _build_capabilities(
+    model_admin: ModelAdmin,
+    *,
+    permissions: Collection[str] | None,
+) -> CapabilitiesMeta:
+    resource = model_admin.model_name
+    bulk_actions: list[str] = []
+    for action in model_admin.actions:
+        action_name = getattr(action, "name", None)
+        if not action_name:
+            continue
+        if _has(permissions, resource, action_name):
+            bulk_actions.append(action_name)
+
+    return CapabilitiesMeta(
+        create=_has(permissions, resource, "create"),
+        update=_has(permissions, resource, "update"),
+        delete=_has(permissions, resource, "delete"),
+        bulk_actions=bulk_actions,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fieldsets
+# ---------------------------------------------------------------------------
+
+
+def build_fieldset_metadata(model_admin: ModelAdmin) -> list[FieldsetMeta]:
+    """Translate ``ModelAdmin.fieldsets`` to wire-format DTOs.
+
+    Per-fieldset filtering rules:
+
+    * Drop fields that aren't real columns on the model and aren't
+      declared as ``calculated_fields``. A misconfigured fieldset that
+      names a stale field degrades to a partial section rather than
+      breaking the contract.
+    * Drop fields filtered by ``protected_fields`` / globally protected
+      fields. Same rule as ``build_field_metadata`` — the section
+      cannot make a hidden field visible by listing it.
+    * Preserve declaration order; deduplicate names within a section
+      (a duplicate would cause the renderer to mount the same widget
+      twice).
+    """
+    declared = list(getattr(model_admin, "fieldsets", []) or [])
+    if not declared:
+        return []
+
+    mapper = sa_inspect(model_admin.model)
+    column_names = {col.name for col in mapper.columns}
+    calculated_names = set(getattr(model_admin, "calculated_fields", {}) or {})
+    valid_names = column_names | calculated_names
+    protected = model_admin.all_protected
+
+    metas: list[FieldsetMeta] = []
+    for fs in declared:
+        seen: set[str] = set()
+        filtered: list[str] = []
+        for name in fs.fields:
+            if name in seen:
+                continue
+            if name not in valid_names:
+                continue
+            if name in protected:
+                continue
+            seen.add(name)
+            filtered.append(name)
+        metas.append(
+            FieldsetMeta(
+                label=fs.label,
+                fields=filtered,
+                collapsed=bool(fs.collapsed),
+                description=fs.description,
+            )
+        )
+    return metas
+
+
+# ---------------------------------------------------------------------------
+# Filters
+# ---------------------------------------------------------------------------
+
+
+def build_filter_metadata(
+    model_admin: ModelAdmin,
+    *,
+    registry: FieldRegistry | None = None,
+) -> list[FilterMeta]:
+    """Translate ``ModelAdmin.filter_fields`` to wire-format DTOs.
+
+    Each filterable column's wire-format ``type`` is the same string
+    the regular FieldMeta uses (``"string"``, ``"integer"``,
+    ``"boolean"``, ...), sourced from the field adapter so the client
+    can render the appropriate widget. Unknown columns are silently
+    dropped to keep the contract endpoint resilient against admin
+    misconfiguration."""
+    declared = list(getattr(model_admin, "filter_fields", []) or [])
+    if not declared:
+        return []
+
+    if registry is None:
+        registry = build_default_registry()
+
+    mapper = sa_inspect(model_admin.model)
+    by_name = {col.name: col for col in mapper.columns}
+
+    out: list[FilterMeta] = []
+    for name in declared:
+        col = by_name.get(name)
+        if col is None:
+            continue
+        adapter = registry.find_adapter(col)
+        type_str = adapter.build_contract(col).type if adapter is not None else "string"
+        out.append(FilterMeta(name=name, type=type_str))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Inlines
+# ---------------------------------------------------------------------------
+
+
+def _resolve_inline_instance(entry):
+    """Accept either an InlineAdmin subclass or an instance.
+
+    Mirrors the AdminRegistry's flexibility for ModelAdmin entries."""
+    if isinstance(entry, type):
+        return entry()
+    return entry
+
+
+def _inline_default_fields(inline) -> list[str]:
+    """Empty ``inline.fields`` means "all writable columns" — same
+    default rule as a top-level ModelAdmin. Skip the foreign key
+    column itself; it's set implicitly to the parent's id."""
+    declared = list(getattr(inline, "fields", []) or [])
+    if declared:
+        return declared
+
+    mapper = sa_inspect(inline.model)
+    fk_name = getattr(inline, "fk_name", None)
+    return [col.name for col in mapper.columns if col.name != fk_name]
+
+
+def build_inline_metadata(model_admin: ModelAdmin) -> list[InlineMeta]:
+    """Translate ``ModelAdmin.inlines`` to wire-format DTOs.
+
+    Per-inline normalization rules:
+
+    * Inline can be declared as a class or an instance; both resolve
+      to an instance here.
+    * Empty ``fields`` list defaults to all columns except the
+      ``fk_name`` column itself.
+    * Unknown ``readonly_fields`` (not on the child model) are kept
+      as-is — the UI may flag them, but we don't validate hard at
+      contract build (matches Fieldset behaviour).
+    """
+    declared = list(getattr(model_admin, "inlines", []) or [])
+    if not declared:
+        return []
+
+    metas: list[InlineMeta] = []
+    for entry in declared:
+        inline = _resolve_inline_instance(entry)
+        fields = _inline_default_fields(inline)
+        metas.append(
+            InlineMeta(
+                model=inline.model_name,
+                fk_name=getattr(inline, "fk_name", None),
+                label=inline.display_label,
+                fields=fields,
+                readonly_fields=list(getattr(inline, "readonly_fields", []) or []),
+                ordering=list(getattr(inline, "ordering", []) or []),
+                extra=int(getattr(inline, "extra", 0)),
+                max_num=getattr(inline, "max_num", None),
+                can_delete=bool(getattr(inline, "can_delete", True)),
+            )
+        )
+    return metas
+
+
+# ---------------------------------------------------------------------------
+# Relations
+# ---------------------------------------------------------------------------
+
+
+def _relation_kind(rel) -> RelationKind | None:
+    """Map a SQLAlchemy relationship direction to our wire-format kind.
+
+    Returns ``None`` for relationship directions we don't render (none
+    exist in stock SA, but a custom direction would otherwise crash the
+    contract endpoint)."""
+    from sqlalchemy.orm.interfaces import MANYTOMANY, MANYTOONE, ONETOMANY
+
+    if rel.direction is MANYTOONE:
+        return "belongs_to"
+    if rel.direction is ONETOMANY:
+        return "has_many"
+    if rel.direction is MANYTOMANY:
+        return "many_to_many"
+    return None
+
+
+def _secondary_name(rel) -> str | None:
+    secondary = rel.secondary
+    if secondary is None:
+        return None
+    name = getattr(secondary, "name", None)
+    return name if name is not None else str(secondary)
+
+
+def build_relation_metadata(
+    model_admin: ModelAdmin,
+    *,
+    admin_registry: "AdminRegistry | None" = None,
+) -> list[RelationMeta]:
+    """Introspect the model's relationships and return wire-format DTOs.
+
+    The ``admin_registry`` is consulted only for the
+    ``target_registered`` flag; callers without registry access can
+    still get the structural relation list, just with
+    ``target_registered=False`` everywhere.
+    """
+    mapper = sa_inspect(model_admin.model)
+    registered_tables: set[str] = set()
+    if admin_registry is not None:
+        registered_tables = set(admin_registry.model_names())
+
+    relations: list[RelationMeta] = []
+    for rel in mapper.relationships:
+        kind = _relation_kind(rel)
+        if kind is None:
+            continue
+        target_cls = rel.entity.class_
+        target_table = getattr(target_cls, "__tablename__", target_cls.__name__)
+        local_columns = sorted({c.name for c in rel.local_columns})
+        remote_columns = sorted({c.name for c in rel.remote_side})
+
+        relations.append(
+            RelationMeta(
+                name=rel.key,
+                kind=kind,
+                target=target_table,
+                target_registered=target_table in registered_tables,
+                local_columns=local_columns,
+                remote_columns=remote_columns,
+                secondary=_secondary_name(rel),
+            )
+        )
+
+    return relations
+
+
+def build_model_contract(
+    model_admin: ModelAdmin,
+    *,
+    registry: FieldRegistry | None = None,
+    permissions: Collection[str] | None = None,
+    admin_registry: "AdminRegistry | None" = None,
+) -> ModelContractMeta:
+    """Render the contract for one admin.
+
+    ``permissions`` is the caller's permission-key set (typically
+    ``ctx.permissions`` from :class:`~adminfoundry.admin.context.AdminContext`).
+    When supplied, the ``capabilities`` block reflects what THIS caller
+    can do; when ``None``, all capabilities default to True so cache-
+    friendly schema-only consumers still get a usable shape.
+    """
     return ModelContractMeta(
         contract_version=CONTRACT_VERSION,
         resource=model_admin.model_name,
         label=model_admin.display_label,
         label_plural=model_admin.display_label_plural,
         description=model_admin.description,
-        fields=build_field_metadata(model_admin),
+        fields=build_field_metadata(model_admin, registry=registry),
         crud_actions=list(CRUD_ACTIONS),
         admin_actions=[_admin_action_meta(a) for a in model_admin.actions],
+        capabilities=_build_capabilities(model_admin, permissions=permissions),
+        relations=build_relation_metadata(model_admin, admin_registry=admin_registry),
+        fieldsets=build_fieldset_metadata(model_admin),
+        inlines=build_inline_metadata(model_admin),
+        filters=build_filter_metadata(model_admin, registry=registry),
         list_display=list(model_admin.list_display),
         search_fields=list(model_admin.search_fields),
         ordering=list(model_admin.ordering),

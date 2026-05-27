@@ -1,44 +1,36 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 from typing import Any
 
-import sqlalchemy.types as sqltypes
 from pydantic import BaseModel, ConfigDict, create_model
 from sqlalchemy import inspect as sa_inspect
 
+from adminfoundry.fields import FieldRegistry, build_default_registry
 from adminfoundry.registry.admin import AUTO_FIELDS, ModelAdmin
 from adminfoundry.schemas.fields import AdminModelSchema, FieldInfo
 
-_TYPE_MAP: list[tuple[type, type]] = [
-    (sqltypes.Boolean, bool),
-    (sqltypes.DateTime, datetime),
-    (sqltypes.Float, float),
-    (sqltypes.Numeric, float),
-    (sqltypes.BigInteger, int),
-    (sqltypes.SmallInteger, int),
-    (sqltypes.Integer, int),
-    (sqltypes.Text, str),
-    (sqltypes.String, str),
-]
 
+def _col_info(
+    model_admin: ModelAdmin,
+    registry: FieldRegistry,
+) -> list[tuple[str, type, bool]]:
+    """Per-column ``(name, python_type, is_optional)`` triples.
 
-def _sa_type_to_python(sa_type: Any) -> type:
-    type_name = type(sa_type).__name__.lower()
-    if "uuid" in type_name or "guid" in type_name:
-        return uuid.UUID
-    for sa_cls, py_cls in _TYPE_MAP:
-        if isinstance(sa_type, sa_cls):
-            return py_cls
-    return str
-
-
-def _col_info(model_admin: ModelAdmin) -> list[tuple[str, type, bool]]:
+    ``python_type`` is sourced from the field adapter that claims the
+    column; ``is_optional`` follows the same rule as before — nullable
+    columns or columns with any default count as optional in the
+    write-side schema.
+    """
     mapper = sa_inspect(model_admin.model)
     cols: list[tuple[str, type, bool]] = []
     for col in mapper.columns:
-        py_type = _sa_type_to_python(col.type)
+        adapter = registry.find_adapter(col)
+        py_type: type = str
+        if adapter is not None:
+            contract = adapter.build_contract(col)
+            if contract.python_type is not None:
+                py_type = contract.python_type
         is_optional = bool(
             col.nullable or col.default is not None or col.server_default is not None
         )
@@ -47,8 +39,17 @@ def _col_info(model_admin: ModelAdmin) -> list[tuple[str, type, bool]]:
 
 
 class SchemaBuilder:
-    def __init__(self) -> None:
+    """Pydantic schema factory driven by the field registry.
+
+    A3 replaces the previous inline ``_TYPE_MAP`` with a registry lookup.
+    The module-level ``schema_builder`` singleton holds a fresh default
+    registry; callers with a custom or extension-augmented registry build
+    their own :class:`SchemaBuilder` instance.
+    """
+
+    def __init__(self, registry: FieldRegistry | None = None) -> None:
         self._cache: dict[str, type[BaseModel]] = {}
+        self._registry = registry or build_default_registry()
 
     def build_list_schema(self, model_admin: ModelAdmin) -> type[BaseModel]:
         return self._cached(model_admin, "list", self._build_list)
@@ -67,7 +68,7 @@ class SchemaBuilder:
         allowed = set(model_admin.list_display) if model_admin.list_display else None
 
         fields: dict[str, Any] = {}
-        for name, py_type, is_optional in _col_info(model_admin):
+        for name, py_type, is_optional in _col_info(model_admin, self._registry):
             if name in excluded:
                 continue
             if allowed is not None and name not in allowed:
@@ -86,7 +87,7 @@ class SchemaBuilder:
     def _build_detail(self, model_admin: ModelAdmin) -> type[BaseModel]:
         excluded = model_admin.all_protected
         fields: dict[str, Any] = {}
-        for name, py_type, is_optional in _col_info(model_admin):
+        for name, py_type, is_optional in _col_info(model_admin, self._registry):
             if name in excluded:
                 continue
             fields[name] = (py_type | None, None) if is_optional else (py_type, ...)
@@ -99,7 +100,7 @@ class SchemaBuilder:
     def _build_create(self, model_admin: ModelAdmin) -> type[BaseModel]:
         excluded = model_admin.all_protected | AUTO_FIELDS | frozenset(model_admin.readonly_fields)
         fields: dict[str, Any] = {}
-        for name, py_type, is_optional in _col_info(model_admin):
+        for name, py_type, is_optional in _col_info(model_admin, self._registry):
             if name in excluded:
                 continue
             fields[name] = (py_type | None, None) if is_optional else (py_type, ...)
@@ -112,7 +113,7 @@ class SchemaBuilder:
     def _build_update(self, model_admin: ModelAdmin) -> type[BaseModel]:
         excluded = model_admin.all_protected | AUTO_FIELDS | frozenset(model_admin.readonly_fields)
         fields: dict[str, Any] = {}
-        for name, py_type, _is_optional in _col_info(model_admin):
+        for name, py_type, _is_optional in _col_info(model_admin, self._registry):
             if name in excluded:
                 continue
             fields[name] = (py_type | None, None)

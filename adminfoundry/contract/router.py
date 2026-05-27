@@ -31,11 +31,18 @@ async def get_full_contract(
     request: Request,
     ctx: AdminContext = Depends(require_admin_context),
 ) -> dict:
-    del ctx  # auth gate only — contract content is identical for every authenticated user
     runtime = request.app.state.adminfoundry
     return {
         "contract_version": CONTRACT_VERSION,
-        "models": [build_model_contract(admin).model_dump() for admin in runtime.registry.all()],
+        "models": [
+            build_model_contract(
+                admin,
+                registry=runtime.fields,
+                permissions=ctx.permissions,
+                admin_registry=runtime.registry,
+            ).model_dump()
+            for admin in runtime.registry.all()
+        ],
         # Extension contributions land under a namespaced top-level key.
         # Each extension owns its namespace (typically the extension name);
         # the UI / API clients iterate over this dict to discover features
@@ -50,7 +57,6 @@ async def get_model_contract(
     request: Request,
     ctx: AdminContext = Depends(require_admin_context),
 ) -> ModelContractMeta:
-    del ctx  # auth gate only
     try:
         resource = validate_resource_name(resource)
     except InvalidResourceNameError:
@@ -65,4 +71,9 @@ async def get_model_contract(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Resource '{resource}' is not registered.",
         )
-    return build_model_contract(admin)
+    return build_model_contract(
+        admin,
+        registry=runtime.fields,
+        permissions=ctx.permissions,
+        admin_registry=runtime.registry,
+    )

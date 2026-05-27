@@ -86,6 +86,7 @@ def test_package_tree_only_contains_v1_subpackages():
         "crud",
         "db",
         "extensions",
+        "fields",
         "i18n",
         "models",
         "providers",

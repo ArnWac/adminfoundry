@@ -63,7 +63,7 @@ def test_nullable_marked_correctly():
 def test_build_model_contract_shape():
     contract = build_model_contract(ArticleAdmin())
     assert contract.resource == "articles"
-    assert contract.contract_version == "1"
+    assert contract.contract_version == "2"
     assert contract.label == "Article"
     assert contract.label_plural == "Articles"
     assert contract.crud_actions == list(CRUD_ACTIONS)

@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from adminfoundry.security.protected_fields import (
     DEFAULT_PROTECTED_FIELDS,
     get_registry,
 )
+
+if TYPE_CHECKING:
+    from adminfoundry.admin.context import AdminContext
+    from adminfoundry.admin.fieldset import Fieldset
+    from adminfoundry.admin.inline import InlineAdmin
+    from adminfoundry.admin.policy import AdminPolicy
 
 #: Backward-compatible alias for the default seed. New code should call
 #: :func:`adminfoundry.security.protected_fields.get_registry` directly
@@ -44,6 +50,30 @@ class ModelAdmin:
 
     actions: list[Any] = []
 
+    #: Columns that may be filtered via query parameters. Each entry
+    #: is a column name on the model. The list view accepts
+    #: ``?filter_<name>=<value>`` for any column listed here and applies
+    #: them as ``column == value`` (with type coercion). Unknown
+    #: filters are rejected with 422. See D1 in the roadmap.
+    filter_fields: list[str] = []
+
+    #: Optional form-layout grouping. Empty list means "render the
+    #: form flat" — see :class:`adminfoundry.admin.fieldset.Fieldset`
+    #: for the per-section structure and validation rules.
+    fieldsets: list["Fieldset"] = []
+
+    #: Optional :class:`~adminfoundry.admin.policy.AdminPolicy` instance
+    #: layered on top of the permission-key checks. ``None`` means
+    #: "permission keys alone decide" (legacy / quickstart behavior).
+    #: Set on subclasses to enforce object-level rules.
+    policy: "AdminPolicy | None" = None
+
+    #: Child models to edit inline with the parent record. Each entry
+    #: is an :class:`~adminfoundry.admin.inline.InlineAdmin` subclass
+    #: or instance. C1 exposes them through the contract; C2 will add
+    #: the transactional parent/child CRUD plumbing.
+    inlines: list["type[InlineAdmin] | InlineAdmin"] = []
+
     calculated_fields: dict[str, Callable[[Any], Any]] = {}
 
     def __init_subclass__(cls, **kwargs: object) -> None:
@@ -55,11 +85,127 @@ class ModelAdmin:
             "readonly_fields",
             "protected_fields",
             "actions",
+            "filter_fields",
+            "fieldsets",
+            "inlines",
         ):
             if attr not in cls.__dict__:
                 setattr(cls, attr, [])
         if "calculated_fields" not in cls.__dict__:
             cls.calculated_fields = {}
+
+    # ------------------------------------------------------------------
+    # Lifecycle hooks (B1)
+    # ------------------------------------------------------------------
+    #
+    # All hooks are no-op coroutines by default — subclasses override
+    # only the ones they need. The CRUD/Action/Import routers will call
+    # them in B2; defining them here first lets app code start writing
+    # business logic against a stable signature.
+    #
+    # Source-agnostic contract: hooks fire for every mutation path
+    # (CRUD API, admin UI, bulk actions, import, jobs, webhooks) so
+    # app-side invariants don't depend on which router triggered the
+    # change.
+
+    async def before_validate(
+        self,
+        data: dict[str, Any],
+        ctx: "AdminContext",
+    ) -> dict[str, Any]:
+        """Pre-validation data tweak hook.
+
+        Fires for both create and update paths, before any schema or
+        permission checks. Return the (possibly modified) payload —
+        the framework feeds the return value into validation.
+        """
+        return data
+
+    async def validate_create(
+        self,
+        data: dict[str, Any],
+        ctx: "AdminContext",
+    ) -> None:
+        """Raise to reject the create payload. Default: accept anything
+        the schema already validated. Custom checks (uniqueness scoped
+        to the tenant, cross-field invariants) go here."""
+        return None
+
+    async def before_create(
+        self,
+        data: dict[str, Any],
+        ctx: "AdminContext",
+    ) -> dict[str, Any]:
+        """Last chance to mutate the payload before the row is built.
+
+        Use for server-side defaults that can't be expressed as
+        ``column.default`` (e.g. picking the current tenant id, hashing
+        an incoming password). Return the payload that the framework
+        will feed to the model constructor.
+        """
+        return data
+
+    async def after_create(
+        self,
+        obj: Any,
+        ctx: "AdminContext",
+    ) -> None:
+        """Post-commit hook. The row exists in the DB; ``obj`` is
+        attached to the session. Use for side effects: outbound
+        webhooks, search-index updates, notifications. B2 will move
+        audit-row writes into a framework-supplied default."""
+        return None
+
+    async def validate_update(
+        self,
+        obj: Any,
+        data: dict[str, Any],
+        ctx: "AdminContext",
+    ) -> None:
+        """Update-only validation. ``obj`` is the persisted row;
+        ``data`` is the patch. Raise to reject. Use for transitions
+        that depend on the current state (e.g. only published posts
+        can be archived)."""
+        return None
+
+    async def before_update(
+        self,
+        obj: Any,
+        data: dict[str, Any],
+        ctx: "AdminContext",
+    ) -> dict[str, Any]:
+        """Last chance to mutate the patch before it is applied to
+        ``obj``."""
+        return data
+
+    async def after_update(
+        self,
+        obj: Any,
+        changes: dict[str, Any],
+        ctx: "AdminContext",
+    ) -> None:
+        """Post-commit hook for updates. ``changes`` is the diff that
+        was applied (keys → new values)."""
+        return None
+
+    async def before_delete(
+        self,
+        obj: Any,
+        ctx: "AdminContext",
+    ) -> None:
+        """Pre-delete hook. Raise to refuse deletion (e.g. soft-delete
+        only, or "cannot delete with active children")."""
+        return None
+
+    async def after_delete(
+        self,
+        obj: Any,
+        ctx: "AdminContext",
+    ) -> None:
+        """Post-delete hook. ``obj`` is the (now-detached) row that
+        was just removed; useful for cascade-style cleanup of external
+        resources."""
+        return None
 
     @property
     def all_protected(self) -> frozenset[str]:
