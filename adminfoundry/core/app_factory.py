@@ -43,6 +43,20 @@ def create_admin(
     config = config or CoreAdminConfig.from_env()
     config.validate()
 
+    # §9: external user-mode must carry at least an explicit
+    # ``auth_provider`` — otherwise the framework would silently fall
+    # back to the builtin JWT provider, which is the opposite of what
+    # the operator declared. user_provider often follows naturally;
+    # we require auth_provider as the smallest "you really meant it"
+    # gate. Permission + tenant providers can stay builtin in external
+    # mode for staged migrations.
+    if config.user_mode == "external" and auth_provider is None:
+        raise ValueError(
+            "user_mode='external' requires an explicit auth_provider on "
+            "create_admin(). Pass your own AuthProvider implementation or "
+            "switch user_mode back to 'builtin' for the framework's JWT stack."
+        )
+
     configure_logging(config)
 
     # The user may have passed their own lifespan. We compose it with the

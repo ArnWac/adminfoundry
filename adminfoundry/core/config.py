@@ -10,6 +10,7 @@ from typing import Literal, TypeVar, cast, get_args
 TenantResolution = Literal["header", "subdomain"]
 DateFormat = Literal["locale", "iso", "eu", "us", "custom"]
 Environment = Literal["development", "test", "production"]
+UserMode = Literal["builtin", "external"]
 
 T = TypeVar("T", bound=str)
 
@@ -147,6 +148,16 @@ class CoreAdminConfig:
     # --- PR-10: production guards ---
     environment: Environment = "development"
 
+    #: Identity stack flavour. ``"builtin"`` keeps the framework's own
+    #: JWT + SQLAlchemy User stack as the authoritative auth/user
+    #: provider — the quickstart default. ``"external"`` says "the
+    #: app is wiring its own ``auth_provider`` / ``user_provider``";
+    #: ``create_admin`` rejects an external-mode start that doesn't
+    #: pass at least an :class:`AuthProvider` so the misconfiguration
+    #: is loud instead of silently falling back to the builtin login
+    #: page. See the v1-providers roadmap and Gap-Analysis §9.
+    user_mode: UserMode = "builtin"
+
     @classmethod
     def from_env(cls, **overrides: object) -> CoreAdminConfig:
         config = cls(
@@ -241,6 +252,11 @@ class CoreAdminConfig:
                 "development",
                 get_args(Environment),
             ),
+            user_mode=_env_literal(
+                "ADMINFOUNDRY_USER_MODE",
+                "builtin",
+                get_args(UserMode),
+            ),
         )
 
         if overrides:
@@ -328,6 +344,11 @@ class CoreAdminConfig:
                 f"environment must be one of {get_args(Environment)}, got {self.environment!r}"
             )
 
+        if self.user_mode not in get_args(UserMode):
+            raise ValueError(
+                f"user_mode must be one of {get_args(UserMode)}, got {self.user_mode!r}"
+            )
+
         # --- PR-10: production foot-guns ---
         # validate() is called from from_env() AND from create_admin().
         # In production mode we refuse to boot with insecure config rather
@@ -381,6 +402,7 @@ class CoreAdminConfig:
             "cors_allow_headers": list(self.cors_allow_headers),
             "security_headers_enabled": self.security_headers_enabled,
             "environment": self.environment,
+            "user_mode": self.user_mode,
             "database_url_set": bool(self.database_url),
             "secret_key_set": bool(self.secret_key),
         }

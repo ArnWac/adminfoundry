@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from adminfoundry.actions.router import router as actions_router
 from adminfoundry.admin.login_contract_router import router as login_contract_router
 from adminfoundry.admin.navigation_router import router as navigation_router
+from adminfoundry.admin.saved_filter_router import router as saved_filter_router
 from adminfoundry.auth.router import router as auth_router
 from adminfoundry.contract.router import router as contract_router
 from adminfoundry.core.config import CoreAdminConfig
@@ -126,6 +127,15 @@ def install_routes(
             prefix=config.admin_ui_path,
             tags=["admin-ui"],
         )
+
+    # Saved filters live under /api/v1/admin/_saved_filters — must be
+    # mounted before the dynamic /{resource} CRUD routes so the path
+    # is matched as a static prefix.
+    app.include_router(
+        saved_filter_router,
+        prefix=config.admin_api_prefix,
+        tags=["admin-saved-filters"],
+    )
 
     # Actions before CRUD so /{resource}/_actions/{action} is matched first.
     app.include_router(

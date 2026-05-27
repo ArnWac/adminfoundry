@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _get_admin_class(request: Request, resource: str) -> type[ModelAdmin]:
+def _get_admin_class(request: Request, resource: str) -> ModelAdmin:
     try:
         resource = validate_resource_name(resource)
     except InvalidResourceNameError:
@@ -120,9 +120,20 @@ async def crud_list(
     session: AsyncSession = Depends(get_async_session),
     ctx: AdminContext = Depends(require_admin_context),
 ) -> dict[str, Any]:
+    from adminfoundry.crud.query import parse_filter_query
+
     admin_class = _get_admin_class(request, resource)
     _require_resource_permission(ctx, admin_class.model_name, "list")
-    return await list_records(session, admin_class, limit=limit, offset=offset, search=search)
+    filters = parse_filter_query(request.query_params, admin_class)
+    return await list_records(
+        session,
+        admin_class,
+        limit=limit,
+        offset=offset,
+        search=search,
+        filters=filters,
+        ctx=ctx,
+    )
 
 
 @router.post("/{resource}", status_code=status.HTTP_201_CREATED)
@@ -135,7 +146,7 @@ async def crud_create(
     admin_class = _get_admin_class(request, resource)
     _require_resource_permission(ctx, admin_class.model_name, "create")
     payload = await request.json()
-    result = await create_record(session, admin_class, payload)
+    result = await create_record(session, admin_class, payload, ctx=ctx)
     await _audit_crud(
         session,
         request,
@@ -159,7 +170,7 @@ async def crud_read(
 ) -> dict[str, Any]:
     admin_class = _get_admin_class(request, resource)
     _require_resource_permission(ctx, admin_class.model_name, "read")
-    return await read_record(session, admin_class, record_id)
+    return await read_record(session, admin_class, record_id, ctx=ctx)
 
 
 @router.patch("/{resource}/{record_id}")
@@ -173,7 +184,7 @@ async def crud_update(
     admin_class = _get_admin_class(request, resource)
     _require_resource_permission(ctx, admin_class.model_name, "update")
     payload = await request.json()
-    result = await update_record(session, admin_class, record_id, payload)
+    result = await update_record(session, admin_class, record_id, payload, ctx=ctx)
     await _audit_crud(
         session,
         request,
@@ -197,7 +208,7 @@ async def crud_delete(
 ) -> dict[str, Any]:
     admin_class = _get_admin_class(request, resource)
     _require_resource_permission(ctx, admin_class.model_name, "delete")
-    result = await delete_record(session, admin_class, record_id)
+    result = await delete_record(session, admin_class, record_id, ctx=ctx)
     await _audit_crud(
         session,
         request,

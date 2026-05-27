@@ -46,9 +46,11 @@ from adminfoundry.audit import record_audit_in_session, request_audit_kwargs
 from adminfoundry.authz.permissions import permission_key
 from adminfoundry.crud.payload import clean_write_payload
 from adminfoundry.crud.query import (
+    apply_filters,
     apply_ordering,
     apply_search,
     coerce_primary_key_value,
+    parse_filter_query,
     primary_key_column,
 )
 from adminfoundry.db.dependencies import get_async_session
@@ -229,6 +231,11 @@ async def export_records(
         base_stmt = base_stmt.where(pk_col.in_(coerced))
         base_stmt = apply_ordering(base_stmt, admin).limit(capped_limit)
     else:
+        # D4: respect the same ``?filter_<field>=value`` query params
+        # the list endpoint accepts so "export current view" is a
+        # 1:1 wire equivalent of the on-screen filtered list.
+        filters = parse_filter_query(request.query_params, admin)
+        base_stmt = apply_filters(base_stmt, admin, filters)
         base_stmt = apply_search(base_stmt, admin, search)
         base_stmt = apply_ordering(base_stmt, admin).limit(capped_limit)
 
@@ -259,6 +266,15 @@ async def export_records(
                 "format": format,
                 "search": search,
                 "selected_ids": len(ids) if ids else 0,
+                "filters": {
+                    k: v
+                    for k, v in (
+                        request.query_params.multi_items()
+                        if hasattr(request.query_params, "multi_items")
+                        else list(request.query_params)
+                    )
+                    if k.startswith("filter_")
+                },
             },
             **request_audit_kwargs(request, status_code=200),
         )
@@ -403,15 +419,27 @@ async def import_records(
     created = 0
     errors: list[dict[str, Any]] = []
 
+    # Use a context labelled ``source="import"`` so lifecycle hooks can
+    # branch on origin (e.g. skip an outbound webhook when rows are
+    # being bulk-imported). ``dataclasses.replace`` is a shallow copy —
+    # principal/tenant/permissions are shared with the original ctx by
+    # reference, which is fine since they are frozen / read-only.
+    from dataclasses import replace as _replace
+
+    import_ctx = _replace(ctx, source="import")
+
     for idx, raw_row in enumerate(rows, start=1):
         try:
             async with session.begin_nested():
-                cleaned = clean_write_payload(
-                    _normalize_import_row(raw_row), schema, partial=False
-                )
+                row_payload: dict[str, Any] = _normalize_import_row(raw_row)
+                row_payload = await admin.before_validate(row_payload, import_ctx)
+                cleaned = clean_write_payload(row_payload, schema, partial=False)
+                await admin.validate_create(cleaned, import_ctx)
+                cleaned = await admin.before_create(cleaned, import_ctx)
                 record = admin.model(**cleaned)
                 session.add(record)
                 await session.flush()
+                await admin.after_create(record, import_ctx)
             created += 1
         except HTTPException as exc:
             errors.append({"row": idx, "error": _format_error_detail(exc.detail)})

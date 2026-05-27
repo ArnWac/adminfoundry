@@ -115,6 +115,114 @@ def apply_ordering(
     return stmt.order_by(*order_clauses)
 
 
+FILTER_PARAM_PREFIX = "filter_"
+
+
+def parse_filter_query(
+    query_params,
+    admin_class: ModelAdmin,
+) -> dict[str, Any]:
+    """Extract ``filter_<field>`` entries from a request's query params.
+
+    ``query_params`` is anything iterable as ``(key, value)`` —
+    FastAPI's ``request.query_params`` works directly. Keys without
+    the ``filter_`` prefix are ignored. Unknown filter fields (not on
+    ``admin_class.filter_fields``) raise 422 so typos are loud."""
+    allowed = set(getattr(admin_class, "filter_fields", []) or [])
+
+    if hasattr(query_params, "multi_items"):
+        items = list(query_params.multi_items())
+    else:
+        items = list(query_params)
+
+    parsed: dict[str, Any] = {}
+    unknown: list[str] = []
+    for key, raw_value in items:
+        if not key.startswith(FILTER_PARAM_PREFIX):
+            continue
+        field_name = key[len(FILTER_PARAM_PREFIX):]
+        if field_name not in allowed:
+            unknown.append(field_name)
+            continue
+        parsed[field_name] = raw_value
+
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "message": "Unknown or unfilterable field(s) in query.",
+                "fields": sorted(set(unknown)),
+            },
+        )
+
+    return parsed
+
+
+def _coerce_filter_value(column, raw_value: str) -> Any:
+    """Best-effort coercion of a query-string filter value to the
+    column's python type.
+
+    Booleans accept ``true``/``false``/``1``/``0`` (case-insensitive).
+    Integers and UUIDs raise 422 on bad input. Strings / unknown
+    column python types pass through verbatim — the SQL layer will
+    do whatever Postgres / SQLite would do for a bare string.
+    """
+    try:
+        py_type = column.type.python_type
+    except NotImplementedError:
+        return raw_value
+
+    if py_type is bool:
+        v = raw_value.strip().lower()
+        if v in {"true", "1", "yes", "on"}:
+            return True
+        if v in {"false", "0", "no", "off"}:
+            return False
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Filter value for {column.name!r} must be a boolean.",
+        )
+
+    if py_type is int:
+        try:
+            return int(raw_value)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Filter value for {column.name!r} must be an integer.",
+            ) from exc
+
+    if py_type is uuid.UUID:
+        try:
+            return uuid.UUID(raw_value)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Filter value for {column.name!r} must be a UUID.",
+            ) from exc
+
+    return raw_value
+
+
+def apply_filters(
+    stmt: Select,
+    admin_class: ModelAdmin,
+    filters: dict[str, Any],
+) -> Select:
+    """Apply parsed filters as ``column == value`` predicates.
+
+    Empty filter dict → no-op (keeps the cost zero for callers that
+    don't filter)."""
+    if not filters:
+        return stmt
+    model = admin_class.model
+    for field_name, raw_value in filters.items():
+        column = get_model_column(model, field_name)
+        coerced = _coerce_filter_value(column, str(raw_value))
+        stmt = stmt.where(column == coerced)
+    return stmt
+
+
 def apply_search(
     stmt: Select,
     admin_class: type[ModelAdmin],
