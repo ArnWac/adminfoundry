@@ -172,6 +172,83 @@ Production-ready gate is complete. The next round of work would draw from the pa
 
 Future work menu (all parked per plan): Redis rate limiting, refresh tokens, 2FA, password reset, audit UI, dashboard widgets, import/export, jobs, workflows, SCIM/SAML, OAuth, metrics dashboard, webhooks.
 
+## Block A/B/C/D refactor — DONE (2026-05)
+
+Per `adminfoundry_admin_package_gap_analysis.md` the user asked to work
+the four open architecture blocks. **1038 tests green** at the end of
+the session (from a 576 baseline at session start, +462 new tests).
+
+- **Block A (A1–A6):** Field Registry under `adminfoundry/fields/`
+  (`FieldAdapter` Protocol, `FieldContract`, scalar adapters + FK
+  adapter). Contract bumped to v2 with first-class `widget` /
+  `required` / `help_text` / `validation` / `capabilities` /
+  `relations` / `fieldsets` / `inlines` / `filters`.
+  `AdminRuntime.fields: FieldRegistry`. `SchemaBuilder` +
+  `contract/service.py` consult the registry instead of the inline
+  `_TYPE_MAP`. `Fieldset` dataclass under `adminfoundry/admin/fieldset.py`.
+  `RelationMeta` introspected from `mapper.relationships`.
+- **Block B (B1–B4):** Lifecycle hooks on `ModelAdmin`
+  (`before_validate` / `validate_create` / `validate_update` /
+  `before_create` / `before_update` / `before_delete` / `after_*`).
+  CRUD services + import_export call them when `ctx` is passed; legacy
+  `ctx=None` callers still work. `AdminPolicy` class in
+  `adminfoundry/admin/policy.py` with object-level gates
+  (`can_view_model` / `can_create` / `can_view_object` /
+  `can_update_object` / `can_delete_object`) plus per-field
+  `field_permission(...)` returning a `FieldPermission` enum
+  (`WRITE` / `READ` / `HIDDEN`). Serializer + clean_write_payload
+  honour it. Actions intentionally not wired into hooks (signature
+  changes in C3 instead).
+- **Block C (C1–C3):** `InlineAdmin` in `adminfoundry/admin/inline.py`
+  with full transactional parent+children write path
+  (`process_inline_writes`, `split_parent_payload`). Wire format:
+  `payload.inlines[<child_table>] = [{...}, {id: 5, ...}, {id: 6, _delete: true}]`.
+  C2+ add-on: `fetch_inline_children` + `_augment_with_inlines`
+  inject the child rows into POST / PATCH / GET responses (list
+  endpoint deliberately omits inlines for N+1 protection). Typed
+  actions: `AdminAction.run(objects, data, ctx)` + `input_schema` +
+  `confirm` + `bulk` flags. Router prefers `run` when subclass
+  overrides it, falls back to `execute` otherwise. Row-action endpoint
+  `POST /{resource}/{record_id}/_actions/{action}` added beside the
+  bulk endpoint.
+- **Block D (D1–D4):** D1 — `filter_fields` on ModelAdmin →
+  `?filter_<field>=value` parsed in `crud/query.py:parse_filter_query`,
+  applied via `apply_filters`. D2 — `SavedFilter` global model +
+  `/api/v1/admin/_saved_filters` CRUD router (per-user, per-tenant
+  scoping, upsert semantics on the (user, resource, name) tuple).
+  D3 — row-action endpoint (see Block C). D4 — export endpoint
+  consults the same filter parser so "export current view" mirrors
+  the on-screen filter set; audit row carries the filter dict.
+  Column visibility is intentionally client-side (the SavedFilter
+  payload field can carry it).
+
+### Late additions outside the original four blocks
+
+- **C2+ (inline-read):** `fetch_inline_children` + `_augment_with_inlines`
+  so GET / POST / PATCH bring inline children back. List endpoint
+  excluded.
+- **§9 `user_mode` flag:** `CoreAdminConfig.user_mode = "builtin" | "external"`
+  (env: `ADMINFOUNDRY_USER_MODE`). `external` mode requires an
+  explicit `auth_provider` on `create_admin` — fails loudly instead
+  of silently falling back to the builtin JWT stack.
+
+### Wire-format compatibility
+
+Contract bumped from `"1"` → `"2"`. All v1 wire fields stayed (no
+removal); the new fields ship with safe defaults (empty list, None,
+or "every capability allowed when no caller context"). Pre-A4 clients
+that ignore unknown fields keep working.
+
+### Status going into the next session
+
+All Gap-Analysis P0+P1 items now closed (§4 InlineAdmin, §5 Field
+Registry, §6 Contract API, §7 Hooks, §8 Policy, §9 user_mode, §10
+Typed Actions, §11 Fieldsets, §12 List View). Roadmap's P2 / "later"
+items remain explicitly parked: Tabs / Conditional Fields,
+M2M-Inlines with assoc-table editing, validation hints in adapters,
+extensions E2–E7 (workflows, webhooks, jobs, observability, dashboard,
+storage), enterprise (2FA, SCIM/SAML, refresh tokens, ...).
+
 ## Key facts to remember
 
 - Multi-tenant uses schema-per-tenant via `SET LOCAL search_path` on the shared session. No per-tenant engines.
@@ -180,6 +257,10 @@ Future work menu (all parked per plan): Redis rate limiting, refresh tokens, 2FA
 - Tenant-local RBAC tables: TenantRole, TenantRolePermission, TenantMembershipRole (live INSIDE tenant schema, no tenant_id column).
 - TenantAuthContext.has_permission() does EXACT match only — but the CRUD router uses authz.permissions.has_permission() which DOES wildcard match. Note this inconsistency; the plan likely wants context.has_permission() to use the wildcard-aware helper. Check during Phase 3.
 - CLI is in adminfoundry/cli/main.py but lacks `tenant create`, `tenant list`, `tenant bootstrap` (only has migrate/upgrade). Add these in Phase 1.
-- Contract is now slim: FieldMeta has {name, type, primary_key, read_only, hidden, nullable, calculated}; ModelContractMeta has {contract_version, resource, label, label_plural, description, fields, crud_actions, admin_actions, list_display, search_fields, ordering}.
+- Contract was slim pre-Block-A — `FieldMeta` had {name, type, primary_key, read_only, hidden, nullable, calculated}. As of A4–C1+D1 the wire shape is much richer (see "Block A/B/C/D refactor" section above for the full diff). Contract version is now `"2"`.
+- Field adapter registry: `AdminRuntime.fields: FieldRegistry`. Extensions can prepend custom adapters during their setup phase (the plumbing is in place, no extension uses it yet).
+- Hook firing order CREATE: `can_create` → `before_validate` → schema clean → `validate_create` → `before_create` → INSERT → `after_create` → serialize → augment-with-inlines.
+- Hook firing order UPDATE: fetch obj → `can_update_object` → field-policy apply to schema → `before_validate` → schema clean → `validate_update` → `before_update` → write → `after_update`.
+- Hook firing order DELETE: fetch obj → `can_delete_object` → `before_delete` → `is_system` guard → DELETE → `after_delete`.
 
 See [[feedback-adminfoundry-style]] for collaboration preferences.
