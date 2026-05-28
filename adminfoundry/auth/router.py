@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from adminfoundry.audit import (
@@ -13,16 +12,27 @@ from adminfoundry.audit import (
     request_audit_kwargs,
 )
 from adminfoundry.auth.dependencies import get_current_user
-from adminfoundry.auth.password import verify_password
 from adminfoundry.auth.rate_limiter import InMemoryLoginRateLimiter
 from adminfoundry.auth.schemas import LoginRequest, MeResponse, TokenResponse
-from adminfoundry.auth.tokens import create_access_token
 from adminfoundry.db.dependencies import get_async_session
 from adminfoundry.models.user import User
+from adminfoundry.providers.base import (
+    AdminPrincipal,
+    LoginCredentials,
+    LoginError,
+)
 
 router = APIRouter()
 
 _login_limiter = InMemoryLoginRateLimiter()
+
+#: ``LoginError.reason`` → (HTTP status, client-facing detail). Unknown
+#: reasons fall back to 401 so a custom provider's bespoke reason never
+#: leaks as a 500.
+_LOGIN_FAILURE_STATUS: dict[str, tuple[int, str]] = {
+    "invalid_credentials": (status.HTTP_401_UNAUTHORIZED, "Invalid credentials."),
+    "inactive_user": (status.HTTP_403_FORBIDDEN, "User is inactive."),
+}
 
 
 async def _audit_login(
@@ -31,7 +41,7 @@ async def _audit_login(
     action: str,
     status_code: int,
     email: str,
-    user: User | None = None,
+    actor: AdminPrincipal | None = None,
     reason: str | None = None,
 ) -> None:
     """Audit a login attempt using an isolated session.
@@ -47,7 +57,7 @@ async def _audit_login(
     await record_audit(
         request.app.state.adminfoundry.db,
         action=action,
-        actor=user,
+        actor=actor,
         changes=changes,
         **request_audit_kwargs(request, status_code=status_code),
     )
@@ -57,9 +67,26 @@ async def _audit_login(
 async def login(
     payload: LoginRequest,
     request: Request,
-    session: AsyncSession = Depends(get_async_session),
 ) -> TokenResponse:
+    """Password login.
+
+    Roadmap 2.6: credential verification + token minting are delegated
+    to the configured auth provider's ``login`` (the
+    :class:`CredentialAuthProvider` surface). This route keeps the
+    transport concerns — rate-limiting, audit with per-reason
+    granularity, and HTTP-status mapping — so a custom provider stays
+    transport-agnostic. A provider that can't do password login (e.g.
+    a pure OAuth/OIDC provider) makes this endpoint return 501.
+    """
     email_key = payload.email.lower()
+    provider = request.app.state.adminfoundry.providers.auth
+
+    login_fn = getattr(provider, "login", None)
+    if login_fn is None:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="The configured auth provider does not support password login.",
+        )
 
     if await _login_limiter.is_limited(email_key):
         await _audit_login(
@@ -74,60 +101,44 @@ async def login(
             detail="Too many failed login attempts.",
         )
 
-    result = await session.execute(select(User).where(User.email == payload.email))
-    user = result.scalar_one_or_none()
-
-    if user is None or not verify_password(payload.password, user.hashed_password):
+    try:
+        session_result = await login_fn(
+            LoginCredentials(email=payload.email, password=payload.password),
+            request=request,
+        )
+    except LoginError as exc:
         await _login_limiter.record_failure(email_key)
+        http_status, detail = _LOGIN_FAILURE_STATUS.get(
+            exc.reason, (status.HTTP_401_UNAUTHORIZED, "Invalid credentials.")
+        )
         await _audit_login(
             request,
             action=LOGIN_FAILURE,
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=http_status,
             email=payload.email,
-            user=user,
-            reason="invalid_credentials",
+            reason=exc.reason,
         )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials.",
-        )
-
-    if not user.is_active:
-        await _login_limiter.record_failure(email_key)
-        await _audit_login(
-            request,
-            action=LOGIN_FAILURE,
-            status_code=status.HTTP_403_FORBIDDEN,
-            email=payload.email,
-            user=user,
-            reason="inactive_user",
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User is inactive.",
-        )
+        raise HTTPException(status_code=http_status, detail=detail) from exc
 
     await _login_limiter.clear(email_key)
 
-    config = request.app.state.adminfoundry.config
-
-    token = create_access_token(
-        user.id,
-        secret_key=config.secret_key,
-        algorithm=config.jwt_algorithm,
-        expires_minutes=config.access_token_expire_minutes,
-        token_version=user.token_version,
+    actor = (
+        AdminPrincipal(id=session_result.subject, email=payload.email)
+        if session_result.subject is not None
+        else None
     )
-
     await _audit_login(
         request,
         action=LOGIN_SUCCESS,
         status_code=200,
         email=payload.email,
-        user=user,
+        actor=actor,
     )
 
-    return TokenResponse(access_token=token)
+    return TokenResponse(
+        access_token=session_result.access_token,
+        token_type=session_result.token_type,
+    )
 
 
 @router.get("/me", response_model=MeResponse)

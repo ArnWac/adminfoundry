@@ -99,6 +99,52 @@ class AdminTenant:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class LoginCredentials:
+    """Credentials submitted to a password-style login endpoint.
+
+    Neutral so the credential-auth provider doesn't depend on the
+    HTTP request schema. The builtin uses email + password; a custom
+    provider backed by an external password store reads the same shape.
+    """
+
+    email: str
+    password: str
+
+
+@dataclass(frozen=True, slots=True)
+class AuthSession:
+    """Result of a successful :meth:`CredentialAuthProvider.login`.
+
+    ``access_token`` is whatever bearer credential the provider mints
+    (the builtin issues a framework JWT). ``expires_in`` is seconds
+    until expiry, or ``None`` when the provider doesn't expose it.
+    ``subject`` is the authenticated principal's id (opaque string) so
+    the route layer can attribute the login-success audit row without
+    re-decoding the token.
+    """
+
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int | None = None
+    subject: str | None = None
+
+
+class LoginError(Exception):
+    """Raised by :meth:`CredentialAuthProvider.login` on a failed login.
+
+    ``reason`` is a stable machine string the route layer maps to an
+    HTTP status + audit reason. The framework recognises
+    ``"invalid_credentials"`` (→ 401) and ``"inactive_user"`` (→ 403);
+    any other reason maps to 401. Keeping the HTTP mapping in the route
+    (not the provider) means a custom provider stays transport-agnostic.
+    """
+
+    def __init__(self, reason: str, message: str | None = None) -> None:
+        self.reason = reason
+        super().__init__(message or reason)
+
+
 @runtime_checkable
 class AuthProvider(Protocol):
     """Extracts an :class:`AuthIdentity` from a FastAPI request.
@@ -111,6 +157,33 @@ class AuthProvider(Protocol):
     """
 
     async def authenticate_request(self, request: Request) -> AuthIdentity | None: ...
+
+
+@runtime_checkable
+class CredentialAuthProvider(Protocol):
+    """Optional extension of :class:`AuthProvider` for password-style login.
+
+    Separate from ``AuthProvider`` (which every provider implements for
+    request authentication) because not every auth backend has a
+    password ``login`` step — OAuth / OIDC providers redirect to an IdP
+    instead and live in the ``auth_oauth`` extension. A provider that
+    backs a username/password store implements this second protocol; the
+    ``/auth/login`` route detects it via ``hasattr`` and returns 501
+    when the configured provider can't do credential login.
+
+    ``login`` verifies the credentials and mints a session, or raises
+    :class:`LoginError` with a machine-readable ``reason``. The route
+    layer owns rate-limiting, audit, and HTTP-status mapping — the
+    provider only answers "are these credentials good, and if so what's
+    the session token".
+    """
+
+    async def login(
+        self,
+        credentials: "LoginCredentials",
+        *,
+        request: Request | None = None,
+    ) -> "AuthSession": ...
 
 
 @runtime_checkable

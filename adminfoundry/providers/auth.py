@@ -24,12 +24,19 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from adminfoundry.auth.tokens import (
     TokenError,
+    create_access_token,
     decode_access_token,
     get_subject_user_id,
     get_token_version,
 )
+from adminfoundry.auth.password import verify_password
 from adminfoundry.models.user import User
-from adminfoundry.providers.base import AuthIdentity
+from adminfoundry.providers.base import (
+    AuthIdentity,
+    AuthSession,
+    LoginCredentials,
+    LoginError,
+)
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -86,3 +93,55 @@ class BuiltinJWTAuthProvider:
             raise _unauthorized("Token has been revoked.")
 
         return AuthIdentity(user_id=str(user_id), claims=dict(payload))
+
+    async def login(
+        self,
+        credentials: LoginCredentials,
+        *,
+        request: Request | None = None,
+    ) -> AuthSession:
+        """Verify email/password against the builtin ``User`` table and
+        mint a framework JWT (Roadmap 2.6).
+
+        Implements :class:`adminfoundry.providers.base.CredentialAuthProvider`.
+
+        Raises :class:`LoginError` with ``reason="invalid_credentials"``
+        when the email is unknown or the password is wrong, and
+        ``reason="inactive_user"`` when the account is disabled. The
+        route layer maps these to HTTP status + audit reason and owns
+        rate-limiting — this method is transport-agnostic.
+        """
+        if request is None:
+            raise RuntimeError(
+                "BuiltinJWTAuthProvider.login needs the request to reach the DB; "
+                "external use should pass a CredentialAuthProvider that does not "
+                "require it."
+            )
+        runtime = request.app.state.adminfoundry
+        config = runtime.config
+        factory = async_sessionmaker(runtime.db.engine, expire_on_commit=False)
+        async with factory() as session:
+            user = (
+                await session.execute(
+                    select(User).where(User.email == credentials.email)
+                )
+            ).scalar_one_or_none()
+
+        if user is None or not verify_password(credentials.password, user.hashed_password):
+            raise LoginError("invalid_credentials", "Invalid credentials.")
+        if not user.is_active:
+            raise LoginError("inactive_user", "User is inactive.")
+
+        token = create_access_token(
+            user.id,
+            secret_key=config.secret_key,
+            algorithm=config.jwt_algorithm,
+            expires_minutes=config.access_token_expire_minutes,
+            token_version=user.token_version,
+        )
+        return AuthSession(
+            access_token=token,
+            token_type="bearer",
+            expires_in=config.access_token_expire_minutes * 60,
+            subject=str(user.id),
+        )
