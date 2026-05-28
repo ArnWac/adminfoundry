@@ -257,7 +257,7 @@ async def create_record(
     # Inline children write into the same session/transaction — any
     # failure here rolls the parent insert back, satisfying the
     # all-or-nothing contract.
-    await process_inline_writes(session, record, admin_class, inline_payload)
+    await process_inline_writes(session, record, admin_class, inline_payload, ctx=ctx)
 
     if ctx is not None:
         await admin_class.after_create(record, ctx)
@@ -309,7 +309,7 @@ async def update_record(
             setattr(record, field_name, value)
         await session.flush()
         await session.refresh(record)
-        await process_inline_writes(session, record, admin_class, inline_payload)
+        await process_inline_writes(session, record, admin_class, inline_payload, ctx=ctx)
         payload = serialize_record(record, admin_class, schema=schema)
         return await _augment_with_inlines(payload, session, record, admin_class)
 
@@ -340,7 +340,7 @@ async def update_record(
     await session.flush()
     await session.refresh(record)
 
-    await process_inline_writes(session, record, admin_class, inline_payload)
+    await process_inline_writes(session, record, admin_class, inline_payload, ctx=ctx)
 
     await admin_class.after_update(record, cleaned, ctx)
 

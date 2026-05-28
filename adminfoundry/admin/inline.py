@@ -54,6 +54,9 @@ from fastapi import HTTPException, status
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from adminfoundry.admin.context import AdminContext
+    from adminfoundry.admin.policy import AdminPolicy
+
 
 class InlineAdmin:
     """Static declaration of one inline child relationship.
@@ -72,6 +75,16 @@ class InlineAdmin:
     extra: int = 0
     max_num: int | None = None
     can_delete: bool = True
+
+    #: Optional :class:`~adminfoundry.admin.policy.AdminPolicy` enforced
+    #: on each inline child row independently of the parent's policy
+    #: (Roadmap 2.2 / Gap-Analysis §4 "permission checks per inline").
+    #: ``None`` means "inherit the parent's gate" — the parent admin's
+    #: own policy already decided whether the whole save is allowed, so
+    #: a child without its own policy adds no further restriction.
+    #: ``can_create`` is consulted for new rows, ``can_update_object``
+    #: for edits, ``can_delete_object`` for removals.
+    policy: "AdminPolicy | None" = None
 
     #: Display label shown above the inline section. Defaults to the
     #: child model's class name (pluralized) at contract-build time.
@@ -284,11 +297,48 @@ async def fetch_inline_children(
     return out
 
 
+async def _enforce_inline_policy(
+    inline: InlineAdmin,
+    *,
+    action: str,
+    obj: Any | None,
+    ctx: "AdminContext | None",
+    tablename: str,
+) -> None:
+    """Run the inline's own :class:`AdminPolicy` gate for one row.
+
+    No-op when the inline has no policy or no ctx was supplied — the
+    parent admin's policy already decided whether the save is allowed
+    at all, so a child without its own policy adds no restriction.
+
+    ``action`` is ``"create" | "update" | "delete"``; ``obj`` is the
+    child row for update/delete and ``None`` for create.
+    """
+    if ctx is None:
+        return
+    policy = getattr(inline, "policy", None)
+    if policy is None:
+        return
+    if action == "create":
+        allowed = await policy.can_create(ctx)
+    elif action == "update":
+        allowed = await policy.can_update_object(obj, ctx)
+    else:  # delete
+        allowed = await policy.can_delete_object(obj, ctx)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Inline '{tablename}' {action} not permitted for this caller.",
+        )
+
+
 async def process_inline_writes(
     session: "AsyncSession",
     parent: Any,
     model_admin,
     inline_payload: Mapping[str, list[dict[str, Any]]],
+    *,
+    ctx: "AdminContext | None" = None,
 ) -> None:
     """Apply inline writes for one parent record.
 
@@ -302,6 +352,12 @@ async def process_inline_writes(
     The whole call runs inside the caller's session — the caller
     owns the transaction. Any exception bubbles up and the outer
     transaction rolls back (parent + children atomic).
+
+    ``ctx`` (Roadmap 2.2) enables per-inline :class:`AdminPolicy`
+    enforcement: each child row is checked against the inline's own
+    ``policy`` (``can_create`` / ``can_update_object`` /
+    ``can_delete_object``) before the write. ``None`` skips all policy
+    checks — legacy / non-HTTP callers behave as before.
 
     Unknown table names in the payload raise 422 — silent ignore
     would hide schema typos.
@@ -359,6 +415,9 @@ async def process_inline_writes(
                         detail=f"Inline '{tablename}' does not allow deletion.",
                     )
                 child = await _fetch_inline_record(session, inline, row_id)
+                await _enforce_inline_policy(
+                    inline, action="delete", obj=child, ctx=ctx, tablename=tablename
+                )
                 await session.delete(child)
                 continue
 
@@ -374,12 +433,18 @@ async def process_inline_writes(
 
             if row_id is None:
                 # Create.
+                await _enforce_inline_policy(
+                    inline, action="create", obj=None, ctx=ctx, tablename=tablename
+                )
                 row[fk_name] = parent_id
                 child = inline.model(**row)
                 session.add(child)
             else:
-                # Update.
+                # Update — fetch first so the policy can inspect the row.
                 child = await _fetch_inline_record(session, inline, row_id)
+                await _enforce_inline_policy(
+                    inline, action="update", obj=child, ctx=ctx, tablename=tablename
+                )
                 for k, v in row.items():
                     setattr(child, k, v)
 
