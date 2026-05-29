@@ -128,6 +128,9 @@ class AuthSession:
     token_type: str = "bearer"
     expires_in: int | None = None
     subject: str | None = None
+    #: Long-lived refresh token (Roadmap 3.1), or ``None`` when the
+    #: provider doesn't issue refresh tokens.
+    refresh_token: str | None = None
 
 
 class LoginError(Exception):

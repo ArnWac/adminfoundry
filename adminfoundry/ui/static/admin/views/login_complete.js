@@ -1,11 +1,14 @@
 // /admin/login-complete — landing page for the OAuth fragment redirect.
 //
 // The OAuth callback ends with a 302 to:
-//   /admin/login-complete#token=<jwt>&return_to=<relative path>
+//   /admin/login-complete#token=<jwt>&refresh=<jwt>&return_to=<relative path>
 //
-// We read the fragment, store the token under the same localStorage
-// key the rest of the UI uses, replace the URL so the fragment is gone
-// (so a copied URL never leaks the JWT), and navigate to return_to.
+// (Roadmap 3.5: refresh is the long-lived refresh token added alongside
+// the access token — pre-3.5 only token was present.)
+//
+// We read the fragment, store both tokens under the localStorage keys
+// the rest of the UI uses, replace the URL so the fragment is gone (so
+// a copied URL never leaks the JWTs), and navigate to return_to.
 //
 // Safety: every failure path lands on /admin/login with an error code
 // so the user gets a clear "try again" message rather than a blank page.
@@ -20,6 +23,7 @@ function _parseFragment(hash) {
   const params = new URLSearchParams(raw);
   return {
     token: params.get("token"),
+    refresh: params.get("refresh"),
     return_to: params.get("return_to"),
   };
 }
@@ -45,7 +49,7 @@ export function mountLoginComplete() {
   const status = document.getElementById("login-complete-status");
   const errorBox = document.getElementById("login-complete-error");
 
-  const { token, return_to } = _parseFragment(window.location.hash);
+  const { token, refresh, return_to } = _parseFragment(window.location.hash);
 
   if (!token) {
     // Someone hit the page directly, or the fragment got stripped by
@@ -56,6 +60,12 @@ export function mountLoginComplete() {
 
   try {
     tokenStore.set(token);
+    // Refresh is optional — pre-3.5 callbacks didn't ship one, so
+    // missing refresh is not a failure (the access token still works
+    // until expiry; the UI just can't silently re-acquire).
+    if (refresh && typeof tokenStore.setRefresh === "function") {
+      tokenStore.setRefresh(refresh);
+    }
   } catch (err) {
     if (errorBox) {
       errorBox.textContent = "Could not store the session token.";

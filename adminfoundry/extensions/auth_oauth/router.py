@@ -41,7 +41,7 @@ from urllib.parse import quote, urlencode
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 
-from adminfoundry.auth.tokens import create_access_token
+from adminfoundry.auth.tokens import create_access_token, create_refresh_token
 from adminfoundry.extensions.auth_oauth.base import InvalidClaimsError
 from adminfoundry.extensions.auth_oauth.providers import (
     GoogleOIDCProvider,
@@ -246,32 +246,42 @@ def _attach_callback_handler(
             # wire — the logger has the detail.
             return _fail("user_resolve_failed", str(exc))
 
-        # ---- 7. mint framework JWT + redirect with fragment ----
+        # ---- 7. mint framework JWT pair + redirect with fragment ----
         config = runtime.config
-        jwt_token = create_access_token(
+
+        # Read the user's current token_version from the DB so a
+        # previous logout-all on this user keeps invalidating prior
+        # tokens (Roadmap 3.5 — pre-3.5 this was hardcoded to 0, which
+        # made the OAuth-minted token immortal across logout-all).
+        # External-provider subjects (no matching builtin User row)
+        # fall back to 0, matching the pre-3.5 semantics for those.
+        token_version = await _read_token_version(runtime, principal.id)
+
+        access_token = create_access_token(
             principal.id,
             secret_key=config.secret_key,
             algorithm=config.jwt_algorithm,
             expires_minutes=config.access_token_expire_minutes,
-            # We don't have a User row in scope here — the user
-            # provider returned an AdminPrincipal DTO. The Builtin
-            # version's token_version defaults to 0 anyway for a fresh
-            # user; existing users get their stored version on next
-            # session.me load. This is consistent with the password
-            # login flow which doesn't read token_version at issue
-            # time either (auth/router.py).
-            token_version=0,
+            token_version=token_version,
+        )
+        refresh_token = create_refresh_token(
+            principal.id,
+            secret_key=config.secret_key,
+            algorithm=config.jwt_algorithm,
+            expires_minutes=config.refresh_token_expire_minutes,
+            token_version=token_version,
         )
 
-        # Fragment-redirect so the token never appears in:
+        # Fragment-redirect so the tokens never appear in:
         # * server access logs (request URLs)
         # * referer headers (the next page the JS navigates to)
         # * Sentry / APM URL captures
         # The JS on _LOGIN_COMPLETE_PATH reads location.hash, stores
-        # the token, then replaces the URL.
+        # both tokens, then replaces the URL.
         fragment_target = (
             f"{_LOGIN_COMPLETE_PATH}"
-            f"#token={quote(jwt_token, safe='')}"
+            f"#token={quote(access_token, safe='')}"
+            f"&refresh={quote(refresh_token, safe='')}"
             f"&return_to={quote(flow.return_to, safe='/')}"
         )
         response = RedirectResponse(url=fragment_target, status_code=302)
@@ -289,6 +299,40 @@ def _callback_url(request: Request, provider_id: str) -> str:
     """
     base = str(request.base_url).rstrip("/")
     return f"{base}/api/v1/oauth/{provider_id}/callback"
+
+
+async def _read_token_version(runtime, principal_id) -> int:
+    """Fetch the builtin User's ``token_version`` for the OAuth-resolved
+    principal (Roadmap 3.5).
+
+    The OAuth user provider returns an :class:`AdminPrincipal` DTO with
+    only ``id`` — no ``token_version``. Without this lookup the
+    callback would have to hardcode ``0``, which makes the minted token
+    immortal across ``logout-all`` (which bumps tkv). When the
+    principal id isn't a UUID (external user provider with opaque ids)
+    or doesn't map to a User row, fall back to ``0`` — preserves the
+    pre-3.5 semantics for those.
+    """
+    import uuid as _uuid
+
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from adminfoundry.models.user import User
+
+    try:
+        user_uuid = _uuid.UUID(str(principal_id))
+    except (ValueError, AttributeError):
+        return 0
+
+    factory = async_sessionmaker(runtime.db.engine, expire_on_commit=False)
+    async with factory() as session:
+        value = (
+            await session.execute(
+                select(User.token_version).where(User.id == user_uuid)
+            )
+        ).scalar_one_or_none()
+    return int(value) if value is not None else 0
 
 
 def _extension_from(request: Request):

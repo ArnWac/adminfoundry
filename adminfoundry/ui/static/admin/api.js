@@ -8,12 +8,22 @@
 
 const cfg = window.ADMINFOUNDRY || {};
 const TOKEN_KEY = "adminfoundry_access";
+const REFRESH_KEY = "adminfoundry_refresh";
 
 export const tokenStore = {
   get: () => localStorage.getItem(TOKEN_KEY),
   set: (token) => localStorage.setItem(TOKEN_KEY, token),
-  clear: () => localStorage.removeItem(TOKEN_KEY),
+  clear: () => {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(REFRESH_KEY);
+  },
   isLoggedIn: () => !!localStorage.getItem(TOKEN_KEY),
+  // Roadmap 3.1/3.5 — refresh-token plumbing. ``setRefresh`` is the
+  // login-flow hook; ``getRefresh`` is the API client's hook for a
+  // future silent-refresh on 401. Optional everywhere — pre-3.5 login
+  // flows that don't supply a refresh token still work.
+  setRefresh: (token) => localStorage.setItem(REFRESH_KEY, token),
+  getRefresh: () => localStorage.getItem(REFRESH_KEY),
 };
 
 export class APIError extends Error {
