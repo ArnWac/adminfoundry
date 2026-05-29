@@ -116,6 +116,19 @@ class CoreAdminConfig:
     password_reset_token_expire_minutes: int = 30
     password_min_length: int = 8
 
+    #: Filesystem root for :class:`LocalFileStorage` (Roadmap P4).
+    #: When set, ``create_admin`` auto-wires a ``LocalFileStorage`` at
+    #: this path as ``runtime.storage`` so :class:`FileField` works
+    #: out-of-the-box. When ``None``, the app either passes an explicit
+    #: ``storage=`` to ``create_admin`` or doesn't use file fields at
+    #: all — accessing ``runtime.storage`` then raises a clear error.
+    storage_root: str | None = None
+    #: Maximum upload size in bytes accepted by the ``/storage/upload``
+    #: route (Roadmap P4). Default 25 MiB — covers typical admin
+    #: documents/images without letting a malicious client OOM the
+    #: server. Per-FileField caps can tighten this further.
+    storage_max_upload_bytes: int = 25 * 1024 * 1024
+
     enable_builtin_ui: bool = True
     enable_builtin_admins: bool = True
     enable_multi_tenant: bool = True
@@ -273,6 +286,11 @@ class CoreAdminConfig:
                 "builtin",
                 get_args(UserMode),
             ),
+            storage_root=(os.getenv("ADMINFOUNDRY_STORAGE_ROOT") or None),
+            storage_max_upload_bytes=_env_int(
+                "ADMINFOUNDRY_STORAGE_MAX_UPLOAD_BYTES",
+                25 * 1024 * 1024,
+            ),
         )
 
         if overrides:
@@ -371,6 +389,9 @@ class CoreAdminConfig:
                 f"user_mode must be one of {get_args(UserMode)}, got {self.user_mode!r}"
             )
 
+        if self.storage_max_upload_bytes <= 0:
+            raise ValueError("storage_max_upload_bytes must be > 0")
+
         # --- PR-10: production foot-guns ---
         # validate() is called from from_env() AND from create_admin().
         # In production mode we refuse to boot with insecure config rather
@@ -427,6 +448,8 @@ class CoreAdminConfig:
             "security_headers_enabled": self.security_headers_enabled,
             "environment": self.environment,
             "user_mode": self.user_mode,
+            "storage_root": self.storage_root,
+            "storage_max_upload_bytes": self.storage_max_upload_bytes,
             "database_url_set": bool(self.database_url),
             "secret_key_set": bool(self.secret_key),
         }

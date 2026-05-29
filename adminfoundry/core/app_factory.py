@@ -39,6 +39,7 @@ def create_admin(
     permission_provider: PermissionProvider | None = None,
     tenant_provider: TenantProvider | None = None,
     password_reset_notifier=None,
+    storage=None,
     **fastapi_kwargs,
 ) -> FastAPI:
     config = config or CoreAdminConfig.from_env()
@@ -81,6 +82,16 @@ def create_admin(
 
         password_reset_notifier = LoggingPasswordResetNotifier()
 
+    # Storage backend (Roadmap P4). Three paths:
+    #   1. explicit ``storage=`` wins (e.g. S3 from an extension)
+    #   2. ``CoreAdminConfig.storage_root`` set → auto-wire LocalFileStorage
+    #   3. neither → ``runtime.storage`` stays None; FileField raises a
+    #      clear error if anything tries to use it
+    if storage is None and config.storage_root:
+        from adminfoundry.storage import LocalFileStorage
+
+        storage = LocalFileStorage(config.storage_root)
+
     runtime = AdminRuntime(
         config=config,
         db=DatabaseManager(
@@ -92,6 +103,7 @@ def create_admin(
         ),
         providers=providers,
         password_reset_notifier=password_reset_notifier,
+        storage=storage,
     )
 
     # Register extensions up front so the lifespan composer can see them.

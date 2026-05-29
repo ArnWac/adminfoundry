@@ -72,6 +72,13 @@ class AdminRuntime:
     #: Delivers password-reset links (Roadmap 3.3). Defaults to the
     #: dev-only logging notifier; apps pass a real one to ``create_admin``.
     password_reset_notifier: Any = None
+    #: Storage backend for :class:`FileField` (Roadmap P4). ``None``
+    #: when neither ``CoreAdminConfig.storage_root`` nor an explicit
+    #: ``storage=`` were passed to ``create_admin`` — apps that don't
+    #: use file fields don't need to configure one. Accessing this on
+    #: the request path while ``None`` is a clear programming error;
+    #: the FileField adapter / upload router check it and raise.
+    storage: Any = None
     #: Module-level singleton — every runtime references the same registry.
     #: Extension ``register_protected_fields`` hooks write into it before
     #: ``create_admin`` freezes it for the duration of the request lifecycle.
