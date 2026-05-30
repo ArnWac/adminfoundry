@@ -425,7 +425,13 @@ def test_csv_import_creates_records(app):
     resp = _upload(app, "widgets.csv", payload, "text/csv")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body == {"created": 2, "failed": 0, "total": 2, "errors": []}
+    assert body == {
+        "dry_run": False,
+        "created": 2,
+        "failed": 0,
+        "total": 2,
+        "errors": [],
+    }
     assert _count_widgets(app) == 2
 
 
@@ -576,3 +582,109 @@ def test_xlsx_import_skips_blank_rows(app):
     body = resp.json()
     assert body["created"] == 2
     assert body["failed"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Dry-Run (Roadmap 5.3)
+# ---------------------------------------------------------------------------
+
+
+def _upload_dry_run(app, filename: str, data: bytes, mime: str):
+    return _client(app).post(
+        "/api/v1/admin/export_widgets/_import?dry_run=true",
+        files={"file": (filename, data, mime)},
+    )
+
+
+def test_dry_run_validates_clean_rows_without_persisting(app):
+    """Roadmap 5.3 — dry_run=true reports what would have happened
+    and rolls back the transaction. DB row count is unchanged."""
+    _grant(app, {"admin.export_widgets.create"})
+    payload = _csv_bytes(
+        ["name", "color"],
+        [["alpha", "red"], ["beta", "blue"]],
+    )
+    resp = _upload_dry_run(app, "widgets.csv", payload, "text/csv")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["dry_run"] is True
+    assert body["created"] == 2  # "would have been created"
+    assert body["failed"] == 0
+    assert body["total"] == 2
+    assert body["errors"] == []
+    # Crucially: nothing actually persisted.
+    assert _count_widgets(app) == 0
+
+
+def test_dry_run_surfaces_row_level_errors_without_persisting(app):
+    """A mixed file (some good rows, some bad) reports the per-row
+    errors AND keeps the good ones out of the DB — operators can fix
+    the file and re-run without cleanup."""
+    _grant(app, {"admin.export_widgets.create"})
+    # Second row violates NOT NULL on ``name`` (empty string after
+    # ``_normalize_import_row`` strip → coerced to None by Pydantic).
+    payload = _csv_bytes(
+        ["name", "color"],
+        [["alpha", "red"], ["", "blue"], ["gamma", "green"]],
+    )
+    resp = _upload_dry_run(app, "widgets.csv", payload, "text/csv")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["dry_run"] is True
+    assert body["failed"] >= 1
+    assert any(err["row"] == 2 for err in body["errors"])
+    # Even the rows that WOULD have succeeded are not persisted.
+    assert _count_widgets(app) == 0
+
+
+def test_dry_run_writes_no_audit_log(app):
+    """A dry-run is not a real action — no IMPORT_AUDIT_ACTION row
+    should appear, otherwise operators would see noise from every
+    "let me check this file" probe."""
+    _grant(app, {"admin.export_widgets.create"})
+    payload = _csv_bytes(["name", "color"], [["alpha", "red"]])
+    _upload_dry_run(app, "widgets.csv", payload, "text/csv")
+
+    runtime = app.state.adminfoundry
+
+    async def _fetch():
+        factory = async_sessionmaker(runtime.db.engine, expire_on_commit=False)
+        async with factory() as session:
+            return list(
+                (
+                    await session.execute(
+                        select(AuditLog).where(AuditLog.action == IMPORT_AUDIT_ACTION)
+                    )
+                ).scalars().all()
+            )
+
+    rows = asyncio.run(_fetch())
+    assert rows == []
+
+
+def test_dry_run_then_real_run_persists(app):
+    """Operator's typical flow: dry-run to verify, then real run.
+    The second call must persist normally — the rollback in the
+    dry-run path must not break the session for subsequent requests."""
+    _grant(app, {"admin.export_widgets.create"})
+    payload = _csv_bytes(["name", "color"], [["alpha", "red"]])
+
+    dry = _upload_dry_run(app, "widgets.csv", payload, "text/csv").json()
+    assert dry["dry_run"] is True
+    assert _count_widgets(app) == 0
+
+    real = _upload(app, "widgets.csv", payload, "text/csv").json()
+    assert real["dry_run"] is False
+    assert real["created"] == 1
+    assert _count_widgets(app) == 1
+
+
+def test_dry_run_default_is_false(app):
+    """A normal POST (no query param) still persists — dry-run is
+    explicitly opt-in. Pin the default so an accidental flip is
+    loud."""
+    _grant(app, {"admin.export_widgets.create"})
+    payload = _csv_bytes(["name", "color"], [["alpha", "red"]])
+    body = _upload(app, "widgets.csv", payload, "text/csv").json()
+    assert body["dry_run"] is False
+    assert _count_widgets(app) == 1

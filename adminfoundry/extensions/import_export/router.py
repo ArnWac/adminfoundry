@@ -388,6 +388,14 @@ async def import_records(
     resource: str,
     request: Request,
     file: UploadFile = File(...),
+    dry_run: bool = Query(
+        False,
+        description=(
+            "Validate + simulate every row without persisting anything "
+            "(Roadmap 5.3). Same response shape; the ``dry_run`` flag "
+            "in the body tells the caller nothing was committed."
+        ),
+    ),
     session: AsyncSession = Depends(get_async_session),
     ctx: AdminContext = Depends(require_admin_context),
 ) -> dict[str, Any]:
@@ -428,25 +436,49 @@ async def import_records(
 
     import_ctx = _replace(ctx, source="import")
 
-    for idx, raw_row in enumerate(rows, start=1):
-        try:
-            async with session.begin_nested():
-                row_payload: dict[str, Any] = _normalize_import_row(raw_row)
-                row_payload = await admin.before_validate(row_payload, import_ctx)
-                cleaned = clean_write_payload(row_payload, schema, partial=False)
-                await admin.validate_create(cleaned, import_ctx)
-                cleaned = await admin.before_create(cleaned, import_ctx)
-                record = admin.model(**cleaned)
-                session.add(record)
-                await session.flush()
-                await admin.after_create(record, import_ctx)
-            created += 1
-        except HTTPException as exc:
-            errors.append({"row": idx, "error": _format_error_detail(exc.detail)})
-        except Exception as exc:
-            errors.append({"row": idx, "error": str(exc) or exc.__class__.__name__})
+    # Roadmap 5.3: wrap the dry-run loop in a savepoint we explicitly
+    # roll back at the end. This is the only sound way to discard the
+    # flushed rows while leaving the outer request transaction healthy
+    # — calling ``session.rollback()`` directly would tear down the
+    # outer transaction and the request-end commit would re-flush any
+    # state still in the identity map.
+    batch_sp = await session.begin_nested() if dry_run else None
+
+    try:
+        for idx, raw_row in enumerate(rows, start=1):
+            try:
+                async with session.begin_nested():
+                    row_payload: dict[str, Any] = _normalize_import_row(raw_row)
+                    row_payload = await admin.before_validate(row_payload, import_ctx)
+                    cleaned = clean_write_payload(row_payload, schema, partial=False)
+                    await admin.validate_create(cleaned, import_ctx)
+                    cleaned = await admin.before_create(cleaned, import_ctx)
+                    record = admin.model(**cleaned)
+                    session.add(record)
+                    await session.flush()
+                    await admin.after_create(record, import_ctx)
+                created += 1
+            except HTTPException as exc:
+                errors.append({"row": idx, "error": _format_error_detail(exc.detail)})
+            except Exception as exc:
+                errors.append({"row": idx, "error": str(exc) or exc.__class__.__name__})
+    finally:
+        if batch_sp is not None and batch_sp.is_active:
+            await batch_sp.rollback()
 
     failed = len(errors)
+
+    if dry_run:
+        # Audit is intentionally skipped — a dry-run isn't a real
+        # action and operators don't want every "let me check this
+        # file" probe in the audit log.
+        return {
+            "dry_run": True,
+            "created": created,
+            "failed": failed,
+            "total": created + failed,
+            "errors": errors,
+        }
 
     try:
         await record_audit_in_session(
@@ -470,6 +502,7 @@ async def import_records(
         )
 
     return {
+        "dry_run": False,
         "created": created,
         "failed": failed,
         "total": created + failed,
