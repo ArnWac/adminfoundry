@@ -520,6 +520,55 @@ form .form-actions {
 .diff-row-changed .diff-before { color: var(--fg-muted); text-decoration: line-through; }
 .diff-row-changed .diff-after { color: var(--fg); }
 
+/* --- permission matrix (Roadmap 5.2b) --- */
+.pm-scroll { overflow-x: auto; padding: 0.75rem 1rem; }
+.pm-table {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.pm-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  font-weight: 600;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.pm-table th.pm-corner { min-width: 220px; }
+.pm-table tbody th[scope="row"] {
+  text-align: left;
+  font-weight: 400;
+  color: var(--fg);
+  padding: 0.3rem 0.6rem;
+  white-space: nowrap;
+}
+.pm-table tbody tr.pm-category th {
+  background: var(--bg-subtle, #f4f6fa);
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  padding: 0.35rem 0.6rem;
+}
+.pm-table .pm-cell {
+  text-align: center;
+  padding: 0.3rem 0.4rem;
+  border-left: 1px solid var(--border-subtle, #eee);
+}
+.pm-table .pm-cell input[type="checkbox"] {
+  width: 16px; height: 16px;
+  cursor: pointer;
+}
+.pm-table .pm-cell input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.pm-role-name { font-weight: 600; }
+.pm-system-flag { color: var(--fg-muted); font-weight: 400; }
+
 /* --- login (standalone page, no sidebar) --- */
 .login-wrap {
   display: flex;

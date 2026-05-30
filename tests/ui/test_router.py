@@ -238,6 +238,7 @@ def test_static_admin_layout():
         "list.js",
         "login.js",
         "login_complete.js",
+        "permission_matrix.js",
         "settings.js",
     ], view_files
 

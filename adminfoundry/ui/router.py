@@ -103,6 +103,18 @@ async def ui_settings(request: Request):
     return _app(request, view="settings")
 
 
+@router.get("/permissions", response_class=HTMLResponse, include_in_schema=False)
+async def ui_permissions(request: Request):
+    """Permission-matrix view (Roadmap 5.2b).
+
+    Renders the matrix shell; the JS view fetches roles + permissions
+    + assignments from ``GET /_permission_matrix`` and the user
+    toggles cells. Mounted on a static path (NOT under
+    ``/{resource}``) so the dynamic CRUD router can't shadow it.
+    """
+    return _app(request, view="permissions")
+
+
 @router.get("/{resource}/new", response_class=HTMLResponse, include_in_schema=False)
 async def ui_create(request: Request, resource: str):
     return _app(

@@ -30,6 +30,8 @@ const viewLoaders = {
   delete: (root) =>
     import("./views/delete.js").then((m) => m.mountDelete(root, cfg.resource, cfg.recordId)),
   settings: (root) => import("./views/settings.js").then((m) => m.mountSettings(root)),
+  permissions: (root) =>
+    import("./views/permission_matrix.js").then((m) => m.mountPermissionMatrix(root)),
 };
 
 async function main() {

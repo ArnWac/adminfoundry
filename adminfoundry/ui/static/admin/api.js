@@ -129,6 +129,14 @@ export const admin = {
   // import_export extension. Returns the JSON import report.
   importFile: (resource, file) =>
     uploadFile(`${cfg.adminPrefix}/${resource}/_import`, file),
+
+  // Permission matrix (Roadmap 5.2). Returns
+  //   { roles: [...], permissions: [...], assignments: {role_id: [keys]} }
+  // and accepts the same ``assignments`` shape on save.
+  permissionMatrix: () =>
+    request("GET", `${cfg.adminPrefix}/_permission_matrix`),
+  permissionMatrixSave: (assignments) =>
+    request("PUT", `${cfg.adminPrefix}/_permission_matrix`, { assignments }),
 };
 
 
