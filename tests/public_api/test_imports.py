@@ -69,6 +69,7 @@ ADMIN_PUBLIC: set[str] = {
     "Fieldset",
     "InlineAdmin",
     "ModelAdmin",
+    "ReadOnlyPolicy",
     "build_admin_context",
     "require_admin_context",
 }

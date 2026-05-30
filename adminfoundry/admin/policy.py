@@ -135,6 +135,31 @@ class AdminPolicy:
         return FieldPermission.WRITE
 
 
+class ReadOnlyPolicy(AdminPolicy):
+    """Locks an admin to list + detail only (Roadmap 5.1).
+
+    Used by built-in admins that should never be mutated through the
+    framework — :class:`~adminfoundry.builtins.admin.AuditLogAdmin` is
+    the canonical caller. List + detail stay open; create / update /
+    delete return ``False`` so the CRUD router answers 403 and the
+    UI's contract-driven form rendering skips the action buttons.
+
+    Field-level access is unchanged: read-only at the resource level
+    does NOT imply HIDDEN/READ at the field level. If you also want
+    to hide specific columns, layer a field-permission policy on top
+    or set ``readonly_fields`` on the admin.
+    """
+
+    async def can_create(self, ctx: "AdminContext") -> bool:
+        return False
+
+    async def can_update_object(self, obj: Any, ctx: "AdminContext") -> bool:
+        return False
+
+    async def can_delete_object(self, obj: Any, ctx: "AdminContext") -> bool:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Field-visibility consolidation (Roadmap 2.1)
 # ---------------------------------------------------------------------------
