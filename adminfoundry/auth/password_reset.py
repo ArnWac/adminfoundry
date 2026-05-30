@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from adminfoundry.models.password_reset_token import PasswordResetToken
 from adminfoundry.models.user import User
+from adminfoundry.notifications.base import Notifier
 
 
 def _hash_token(raw: str) -> str:
@@ -35,7 +36,7 @@ def _hash_token(raw: str) -> str:
 
 
 @runtime_checkable
-class PasswordResetNotifier(Protocol):
+class PasswordResetNotifier(Notifier, Protocol):
     """Delivers a password-reset token to the user.
 
     Implementations send an email / SMS / push containing a link with
@@ -43,6 +44,11 @@ class PasswordResetNotifier(Protocol):
     for a known, active user. Must not raise for normal delivery
     failures the app wants to swallow — the route treats a notifier
     exception as a server error only if it propagates.
+
+    Extends :class:`~adminfoundry.notifications.Notifier` (the marker
+    Protocol) so registration into
+    :class:`~adminfoundry.notifications.NotifierRegistry` is
+    well-typed without a duplicate inheritance step.
     """
 
     async def send_reset(

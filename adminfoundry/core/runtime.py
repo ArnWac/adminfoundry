@@ -9,6 +9,7 @@ from adminfoundry.core.config import CoreAdminConfig
 from adminfoundry.db.session import DatabaseManager
 from adminfoundry.extensions.registry import ExtensionRegistry
 from adminfoundry.fields import FieldRegistry, build_default_registry
+from adminfoundry.notifications.base import NotifierRegistry
 from adminfoundry.providers.base import (
     AuthProvider,
     PermissionProvider,
@@ -71,7 +72,14 @@ class AdminRuntime:
     fields: FieldRegistry = field(default_factory=build_default_registry)
     #: Delivers password-reset links (Roadmap 3.3). Defaults to the
     #: dev-only logging notifier; apps pass a real one to ``create_admin``.
+    #: Also auto-registered into :attr:`notifiers` so generic lookups
+    #: (Roadmap P4.5) find it.
     password_reset_notifier: Any = None
+    #: Typed-notifier registry (Roadmap P4.5). Apps and extensions
+    #: register implementations keyed by their Protocol type; publishers
+    #: look them up with :meth:`NotifierRegistry.get` and treat ``None``
+    #: as "no notifier configured for this event".
+    notifiers: NotifierRegistry = field(default_factory=NotifierRegistry)
     #: Storage backend for :class:`FileField` (Roadmap P4). ``None``
     #: when neither ``CoreAdminConfig.storage_root`` nor an explicit
     #: ``storage=`` were passed to ``create_admin`` — apps that don't

@@ -89,6 +89,7 @@ def test_package_tree_only_contains_v1_subpackages():
         "fields",
         "i18n",
         "models",
+        "notifications",
         "providers",
         "registry",
         "root",

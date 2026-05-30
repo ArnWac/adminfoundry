@@ -106,6 +106,14 @@ def create_admin(
         storage=storage,
     )
 
+    # Mirror the explicit ``password_reset_notifier`` into the generic
+    # notifier registry (P4.5) so publishers that look up by Protocol
+    # type find it without depending on the ad-hoc keyword. The
+    # explicit attribute stays for backwards compat.
+    from adminfoundry.auth.password_reset import PasswordResetNotifier
+
+    runtime.notifiers.register(PasswordResetNotifier, password_reset_notifier)
+
     # Register extensions up front so the lifespan composer can see them.
     runtime.extensions.register_all(extensions)
 
