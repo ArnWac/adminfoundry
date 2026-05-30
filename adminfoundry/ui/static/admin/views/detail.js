@@ -2,6 +2,7 @@
 
 import { APIError, admin } from "../api.js";
 import { getResourceContract } from "../contract.js";
+import { looksLikeAuditDiff, renderDiffTable } from "../diff.js";
 import { el, mount, setBreadcrumb } from "../dom.js";
 import { formatValue } from "../format.js";
 
@@ -27,7 +28,16 @@ export async function mountDetail(root, resource, recordId) {
   const grid = el("dl", { class: "detail-grid" });
   for (const field of contract.fields) {
     grid.appendChild(el("dt", {}, prettify(field.name)));
-    const formatted = formatValue(record[field.name], field);
+    const value = record[field.name];
+    // Audit log "changes" — and any app-side blob using the same
+    // {field: [before, after]} shape — gets a structured diff table
+    // instead of the default JSON.stringify. Detection is by shape
+    // so apps don't need a framework opt-in to use it.
+    if (looksLikeAuditDiff(value)) {
+      grid.appendChild(el("dd", {}, renderDiffTable(value)));
+      continue;
+    }
+    const formatted = formatValue(value, field);
     const dd = el("dd", { class: formatted.muted ? "muted" : "" }, formatted.text);
     if (formatted.mono) dd.style.fontFamily = "ui-monospace, SFMono-Regular, monospace";
     grid.appendChild(dd);

@@ -484,6 +484,42 @@ form .form-actions {
 }
 .detail-grid dd.muted { color: var(--fg-muted); }
 
+/* --- audit diff table (Roadmap 5.1b) --- */
+.diff-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.85rem;
+}
+.diff-table thead th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--fg-muted);
+  border-bottom: 1px solid var(--border);
+  padding: 0.35rem 0.6rem;
+}
+.diff-table tbody th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--fg-muted);
+  padding: 0.3rem 0.6rem;
+  vertical-align: top;
+  white-space: nowrap;
+}
+.diff-table td {
+  padding: 0.3rem 0.6rem;
+  vertical-align: top;
+  word-break: break-word;
+}
+.diff-arrow {
+  color: var(--fg-muted);
+  width: 1.5rem;
+  text-align: center;
+}
+.diff-row-added .diff-after { color: var(--success, #1a7f37); }
+.diff-row-removed .diff-before { color: var(--danger, #c0392b); text-decoration: line-through; }
+.diff-row-changed .diff-before { color: var(--fg-muted); text-decoration: line-through; }
+.diff-row-changed .diff-after { color: var(--fg); }
+
 /* --- login (standalone page, no sidebar) --- */
 .login-wrap {
   display: flex;

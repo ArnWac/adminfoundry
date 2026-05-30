@@ -174,6 +174,18 @@ def test_static_js_served(client):
     assert "javascript" in resp.headers["content-type"]
 
 
+def test_static_diff_module_served(client):
+    """Roadmap 5.1b — the diff module the detail view dynamically
+    imports must actually be reachable through the static mount."""
+    resp = client.get("/admin/static/diff.js")
+    assert resp.status_code == 200
+    assert "javascript" in resp.headers["content-type"]
+    body = resp.text
+    # Pin the public surface so detail.js's named imports keep working.
+    assert "looksLikeAuditDiff" in body
+    assert "renderDiffTable" in body
+
+
 def test_static_unknown_returns_404(client):
     resp = client.get("/admin/static/nope.js")
     assert resp.status_code == 404
@@ -210,6 +222,7 @@ def test_static_admin_layout():
         "admin.js",
         "api.js",
         "contract.js",
+        "diff.js",
         "dom.js",
         "format.js",
     ], files
