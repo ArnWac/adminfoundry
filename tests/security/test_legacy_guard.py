@@ -94,6 +94,7 @@ def test_package_tree_only_contains_v1_subpackages():
         "root",
         "schemas",
         "security",
+        "storage",
         "tenancy",
         "ui",
         # PEP 561 marker — flat file, not a subpackage

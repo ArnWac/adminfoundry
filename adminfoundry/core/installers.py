@@ -19,6 +19,7 @@ from adminfoundry.core.middleware import (
 )
 from adminfoundry.crud.router import router as crud_router
 from adminfoundry.root.router import router as root_router
+from adminfoundry.storage.router import router as storage_router
 
 
 def install_middleware(
@@ -142,6 +143,17 @@ def install_routes(
         saved_filter_router,
         prefix=config.admin_api_prefix,
         tags=["admin-saved-filters"],
+    )
+
+    # Storage upload + serve (P4.4). Mounted before CRUD for the same
+    # reason as saved_filter_router — the leading ``_storage`` segment
+    # must be matched as a static prefix, not consumed by ``/{resource}``.
+    # The router itself returns 503 when no backend is wired, so it's
+    # always safe to mount.
+    app.include_router(
+        storage_router,
+        prefix=config.admin_api_prefix,
+        tags=["admin-storage"],
     )
 
     # Actions before CRUD so /{resource}/_actions/{action} is matched first.
