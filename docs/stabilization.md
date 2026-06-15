@@ -161,6 +161,30 @@ mit Begründung), dann `[tool.mypy] files` aufs Paket erweitern.
 
 ---
 
+## Follow-up — ruff Lint/Format-Drift (CI-Lint vorbestehend rot)
+
+**Befund:** Die ruff-Config selektiert `RUF059` (erst ab ruff ≥ 0.11), aber
+das Paket ist unter keiner RUF059-fähigen Version sauber: ruff 0.11.13
+meldet ~110 Lint-Treffer (überwiegend `UP037` Quotes-in-Annotations, `F401`,
+`I001`, `E402`, `RUF012`), und der 0.15-Formatter würde ~70 Dateien
+umformatieren. Da `[project.optional-dependencies] dev` ruff ungepinnt
+(`>=0.6.0`) lässt, läuft CI auf der jeweils neuesten ruff → die Lint-Stufe
+ist faktisch rot, unabhängig von der Stabilisierungsrunde.
+
+**Vorgehen (eigener, reviewbarer Change):**
+1. ruff pinnen (`ruff>=0.15,<0.16`) für deterministisches CI.
+2. `ruff check . --fix` (92 Autofixes: UP037/F401/I001/RUF100) + `ruff format .`.
+3. Intentionale Muster per Config begründen statt umbauen:
+   `RUF012` (deklarative `ModelAdmin`/`InlineAdmin` Mutable-Class-Attrs,
+   in `__init_subclass__` zurückgesetzt) → `lint.ignore`; `E402`
+   (bewusste Lazy-Imports) → gezielte `# noqa`.
+4. Rest manuell (`B904`, `F841`, `UP042`).
+5. Voller Suite-Lauf + `ruff check`/`format --check` grün.
+
+**Status:** offen, **kein 1.0-Blocker für die Features**, aber Voraussetzung
+für eine grüne CI-Lint-Stufe. Bewusst als eigener Change gehalten — ein
+100+-Dateien-Autofix/Reformat gehört nicht in den Stabilisierungs-Branch.
+
 ## Erledigt in dieser Härtungsrunde
 
 P1 (JS-Harness, Contract-Snapshots, mypy-CI) vollständig; P2 (A0.4/A0.5)
