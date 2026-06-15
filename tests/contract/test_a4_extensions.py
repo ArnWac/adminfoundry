@@ -362,6 +362,39 @@ def test_list_badges_default_empty():
 
 
 # ---------------------------------------------------------------------------
+# date_hierarchy (Roadmap 5.5)
+# ---------------------------------------------------------------------------
+
+
+def test_date_hierarchy_emitted_for_datetime_column():
+    class _A(ModelAdmin):
+        model = _Post
+        date_hierarchy = "created_at"
+
+    assert build_model_contract(_A()).date_hierarchy == "created_at"
+
+
+def test_date_hierarchy_none_for_non_date_column():
+    class _A(ModelAdmin):
+        model = _Post
+        date_hierarchy = "title"  # String column
+
+    assert build_model_contract(_A()).date_hierarchy is None
+
+
+def test_date_hierarchy_none_for_unknown_column():
+    class _A(ModelAdmin):
+        model = _Post
+        date_hierarchy = "does_not_exist"
+
+    assert build_model_contract(_A()).date_hierarchy is None
+
+
+def test_date_hierarchy_default_none():
+    assert build_model_contract(_PostAdmin()).date_hierarchy is None
+
+
+# ---------------------------------------------------------------------------
 # form_layout (Roadmap 5.4)
 # ---------------------------------------------------------------------------
 

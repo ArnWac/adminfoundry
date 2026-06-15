@@ -76,6 +76,14 @@ class ModelAdmin:
     #: placeholder). Unknown field names are ignored by the builder.
     placeholders: dict[str, str] = {}
 
+    #: Optional list-view date drill-down (Roadmap 5.5). Names a
+    #: ``Date``/``DateTime`` column; the list view then offers a
+    #: year → month → day filter over it. Surfaced on
+    #: ``ModelContractMeta.date_hierarchy`` (dropped if the column is
+    #: missing or not a date type); the list endpoint accepts
+    #: ``?dh=YYYY[-MM[-DD]]`` to filter to that period.
+    date_hierarchy: str | None = None
+
     #: Optional list-view badge styling (Roadmap 5.5). Maps a column
     #: name to a ``{value: style}`` table; the list view renders matching
     #: cell values as a colored badge instead of plain text::
