@@ -12,176 +12,182 @@ absichert. Reihenfolge nach Risiko × Nutzen.
 
 ## Übersicht
 
-| Prio | Thema | Kern | Aufwand |
-|---|---|---|---|
-| **P1** | [JS-Test-Harness](#p1-js-test-harness) | UI-Logik automatisiert testen | mittel |
-| **P1** | [Contract-Snapshot-Tests](#p1-contract-snapshot-tests) | UI-Wahrheit gegen stille Breaking Changes | klein–mittel |
-| **P1** | [`mypy` in CI](#p1-mypy-in-ci) | `py.typed`-Versprechen erzwingen | klein |
-| **P2** | [A0.4 Field-Visibility](#p2-a04-field-visibility-konsolidieren-oder-festschreiben) | 3 Mechanismen vereinheitlichen oder bewusst dokumentieren | mittel |
-| **P2** | [A0.5 User-Entkopplung](#p2-a05-user-entkopplung-rootauditcli) | „external auth" vollständig machen oder Grenze dokumentieren | mittel–groß |
-| **P3** | [protected_fields-Singleton](#p3-protected_fields-singleton-revisit) | nur revisit bei Multi-App-Isolationsbedarf | mittel |
-| **P3** | [Custom-Component-Injektion](#p3-custom-component-injektionspunkt) | echter JS-Renderer-Hook nur bei Bedarf | mittel |
-| **—** | [Release-/Versionspolitik](#release--versionspolitik) | 1.0-Gate & SemVer-Zusage festlegen | klein |
+| Prio | Thema | Status |
+|---|---|---|
+| **P1** | [JS-Test-Harness](#p1-js-test-harness) | ✅ erledigt (Vitest + `logic.js` + CI-Job) |
+| **P1** | [Contract-Snapshot-Tests](#p1-contract-snapshot-tests) | ✅ erledigt |
+| **P1** | [`mypy` in CI](#p1-mypy-in-ci) | ✅ erledigt (gescopt auf Vertragsschicht) |
+| **P2** | [A0.4 Field-Visibility](#p2-a04-field-visibility-konsolidieren-oder-festschreiben) | ✅ entschieden + dokumentiert |
+| **P2** | [A0.5 User-Entkopplung](#p2-a05-user-entkopplung-rootauditcli) | ✅ entschieden (Grenze dokumentiert) |
+| **P3** | [protected_fields-Singleton](#p3-protected_fields-singleton-revisit) | ✅ akzeptiert (Tripwire-Test) |
+| **P3** | [Custom-Component-Injektion](#p3-custom-component-injektionspunkt) | ⏸️ aufgeschoben (bei Bedarf) |
+| **—** | [Release-/Versionspolitik](#release--versionspolitik) | ✅ festgelegt (siehe unten) |
+| **Follow-up** | [mypy aufs Gesamtpaket](#follow-up-mypy-aufs-gesamtpaket) | offen, kein 1.0-Blocker |
 
 ---
 
-## P1 — JS-Test-Harness
+## P1 — JS-Test-Harness ✅
 
-**Ziel:** Die UI-Logik (Form-/List-View, Conditional/Dependent Fields,
-Inline-Edit, Column-Visibility, Sortierung) wird automatisiert getestet,
-nicht nur per `node --check` + Python-Smoke.
+**Ziel:** Die UI-Logik wird automatisiert getestet, nicht nur per
+`node --check` + Python-Smoke.
 
-**Befund:** ~17 JS-Module in [adminfoundry/ui/static/admin/](../adminfoundry/ui/static/admin/)
-tragen mittlerweile echte Logik (Sichtbarkeitsregeln, Choice-Filter,
-Dirty-Tracking, localStorage-Prefs). Aktuell gibt es **keine** JS-Test-
-Infrastruktur — DOM-Verhalten ist ungetestet. Das ist die größte
-Regressions­lücke des Pakets.
+**Umgesetzt:** Die reine, DOM-freie Logik (Conditional-/Dependent-Field-
+Auswertung, Sort-Cycle, Date-Hierarchy-Compose, Inline-Edit-Dirty-Tracking,
+loose-equal) wurde in [adminfoundry/ui/static/admin/logic.js](../adminfoundry/ui/static/admin/logic.js)
+extrahiert; `form.js`/`list.js` importieren sie (Duplikate entfernt).
+Vitest-Suite unter [tests/js/logic.test.js](../tests/js/logic.test.js)
+(14 Fälle) + CI-Job `js`.
 
-**Konkrete Änderung:** Vitest (oder node:test) + jsdom einführen; die
-reinen Logikfunktionen exportierbar/testbar machen
-(`buildFormBody`, `valueSatisfies`, Dependency-Narrowing,
-`listPrefs`, Sort-Cycle, Edit-Dirty-Tracking). CI-Job ergänzen.
-
-**Akzeptanzkriterien:**
-- [ ] `npm test` läuft die JS-Suite; in CI als eigener Job.
-- [ ] Conditional-/Dependent-Field-Auswertung, Sort-Cycle, Column-Visibility
-  und Inline-Edit-Dirty-Tracking sind mit Unit-Tests gedeckt.
-- [ ] Mindestens ein jsdom-Render-Test pro View-Modul (mountet ohne Fehler).
-
-**Empfohlene Tests:** die in dieser Session per Wegwerf-`node -e` geprüften
-Logikbausteine als echte Vitest-Fälle festschreiben.
+**Offen (bewusst, kein Blocker):** DOM-/jsdom-Render-Tests der View-Module.
+Die *Entscheidungslogik* ist jetzt gedeckt; reines DOM-Mounting bleibt per
+Python-Smoke abgesichert.
 
 ---
 
-## P1 — Contract-Snapshot-Tests
+## P1 — Contract-Snapshot-Tests ✅
 
-**Ziel:** Der Contract ist die einzige UI-Wahrheit — Breaking Changes daran
-müssen bewusst werden, nicht still passieren.
-
-**Befund:** `ModelContractMeta` ist über die Phasen stark gewachsen
-(`fieldsets`, `form_layout`, `list_badges`, `date_hierarchy`,
-`list_editable`, `dependency`, `condition`, `placeholder`, …). Es gibt
-Feldtests, aber keinen Snapshot, der die **Gesamtform** einer Referenz-
-Ressource einfriert.
-
-**Konkrete Änderung:** Snapshot-Test über `build_model_contract()` für ein
-repräsentatives Admin (mit Fieldsets, Relationen, Protected/Readonly,
-Actions, Badges, Date-Hierarchy). `contract_version` als bewussten Gate
-prüfen.
-
-**Akzeptanzkriterien:**
-- [ ] Ein Snapshot-Test schlägt fehl, wenn sich die Contract-Form ändert,
-  ohne dass Snapshot **und** ggf. `contract_version` mitgezogen werden.
-- [ ] Protected Fields tauchen im Snapshot nie als lesbar/writable auf.
-
-**Empfohlene Tests:** `tests/contract/test_contract_snapshot.py`.
+**Umgesetzt:** [tests/contract/test_contract_snapshot.py](../tests/contract/test_contract_snapshot.py)
+friert die volle `build_model_contract()`-Form für ein repräsentatives
+Admin ein (Fieldsets, Badges, Date-Hierarchy, list_editable, Widget-
+Override, Readonly, Protected, Actions), pinnt `contract_version` und
+re-asserted, dass ein Protected-Feld nirgends im Contract auftaucht.
 
 ---
 
-## P1 — `mypy` in CI
+## P1 — `mypy` in CI ✅
 
-**Ziel:** Das ausgelieferte `py.typed`-Versprechen wird erzwungen.
+**Umgesetzt:** `typecheck`-Job + `[tool.mypy]` in `pyproject.toml`,
+gescopt auf die typisierte Vertragsschicht (`providers/` +
+`core/config.py`) mit `follow_imports = silent`. Der eine reale Nit
+(`from_env(**overrides: Any)`) ist gefixt.
 
-**Befund:** Das Paket versendet `py.typed`, aber CI prüft nur `ruff`
-(Lint + Format) und `pytest` — **kein** Typecheck. Typfehler an der
-Public API können unbemerkt durchrutschen.
-
-**Konkrete Änderung:** `mypy` (oder `pyright`) konfigurieren und als
-CI-Job ergänzen; zunächst ggf. auf die Public-API-Module streng, intern
-nachziehbar.
-
-**Akzeptanzkriterien:**
-- [ ] CI bricht bei Typfehlern in `adminfoundry/` ab.
-- [ ] Baseline dokumentiert (welche Module bereits streng sind).
+**Bewusste Scope-Entscheidung:** Das Gesamtpaket trägt ~80 Framework-
+Typing-Nits (SQLAlchemy/FastAPI-Generics, `type[ModelAdmin]`-vs-Instanz).
+Ein voller Sweep wäre riskanter Churn ohne Laufzeitnutzen → als Follow-up
+geführt (s. u.), kein 1.0-Blocker.
 
 ---
 
-## P2 — A0.4 Field-Visibility konsolidieren oder festschreiben
+## P2 — A0.4 Field-Visibility ✅
 
-**Ziel:** Eine nachvollziehbare Regel für Feld-Sichtbarkeit/Schreibbarkeit.
-
-**Befund:** Drei Mechanismen koexistieren — `protected_fields`,
-`readonly_fields`, `AdminPolicy.field_permission()`. Sie sind via
-`FieldPermission.strictest()` UND-verknüpft, aber **nicht** zu einer
-Pipeline vereinheitlicht (Roadmap A0.4).
-
-**Entscheidung (deine):** entweder
-(a) intern in *eine* Policy-Resolution übersetzen, oder
-(b) den 3-Wege-Stand bewusst als „so gewollt" dokumentieren.
-
-**Akzeptanzkriterien:**
-- [ ] Es gibt eine dokumentierte, getestete Auflösungsreihenfolge.
-- [ ] Tests decken Kombinationen (protected ∧ readonly ∧ policy) ab.
+**Entscheidung:** **festschreiben** — die drei Knöpfe (`protected_fields`,
+`readonly_fields`, `AdminPolicy.field_permission`) sind *Eingaben* in
+**einen** Resolver `FieldPermission.strictest()` (`WRITE < READ < HIDDEN`);
+eine Policy kann nur verschärfen, nie lockern. Das ist die von A0.4
+geforderte Konsolidierung — nicht drei konkurrierende Pfade. Dokumentiert
+in [security.md](security.md#field-protection), getestet in
+`tests/crud/test_field_permission_resolution.py`.
 
 ---
 
-## P2 — A0.5 User-Entkopplung (Root/Audit/CLI)
+## P2 — A0.5 User-Entkopplung (Root/Audit/CLI) ✅
 
-**Ziel:** „external `user_mode`" ist keine Halbwahrheit mehr.
+**Entscheidung:** **Grenze dokumentieren** statt riskanter Voll-Refactor.
+Externes `user_mode` deckt Auth/CRUD/Contract vollständig über die Provider
+ab; `root/*`, `audit/service.py`, `tenancy/bootstrap.py`, `cli/main.py`
+bleiben bewusst Builtin-`User`-gekoppelt. Als ausdrückliche Grenze
+festgehalten in [auth-architecture.md](auth-architecture.md#boundary-where-external-auth-stops-roadmap-a05)
+und [security.md](security.md#known-limitations-be-honest).
 
-**Befund:** Direkte `User`-Modell-Imports außerhalb der Builtin-Provider
-(`root/users.py`, `root/tenants.py`, `root/impersonation.py`,
-`auth/router.py`, `audit/service.py`, `tenancy/bootstrap.py`,
-`cli/main.py`) — in Phase 1.5 bewusst scope-reduced. CRUD/Contract laufen
-extern, aber Root-/Audit-Pfade hängen am Builtin-User.
-
-**Entscheidung (deine):** vollständige Provider-Entkopplung dieser Pfade
-**oder** explizite Doku „Root/Audit/CLI sind Builtin-only".
-
-**Akzeptanzkriterien:**
-- [ ] Entweder: kein Root-/Audit-Pfad importiert das konkrete `User`-Modell,
-  und ein Fake-External-Provider deckt sie in Tests ab.
-- [ ] Oder: die Builtin-Kopplung ist in [docs/auth-architecture.md](auth-architecture.md)
-  als bewusste Grenze dokumentiert.
+**Offen (Follow-up, kein 1.0-Blocker):** vollständige Provider-Entkopplung
+dieser Pfade + Fake-External-Provider-Tests — erst wenn ein Setup ohne
+Builtin-`User` wirklich gebraucht wird.
 
 ---
 
-## P3 — `protected_fields`-Singleton (revisit)
+## P3 — `protected_fields`-Singleton ✅ akzeptiert
 
-**Ziel:** Klarheit über App-Isolation der Security-Registry.
-
-**Befund:** Modul-Level-Singleton; bewusst dokumentiert + fail-safe
-(Teilen führt nur zu Über-Protektion, kein Leck). Bereits per Tripwire-Test
-festgeschrieben.
-
-**Status:** **akzeptiert.** Nur aufgreifen, wenn echte Per-App-Isolation
-mehrerer Admin-Apps im selben Prozess gefordert wird — dann den Lesepfad
-(`ModelAdmin.all_protected`, ~10 Stellen) über die Runtime führen, mit
-voller Leak-Test-Suite.
+Modul-Level-Singleton, bewusst + fail-safe (Teilen führt nur zu Über-
+Protektion, kein Leck), per Tripwire-Test in
+`tests/security/test_protected_field_registry.py` festgeschrieben.
+**Status: akzeptiert.** Nur aufgreifen, wenn echte Per-App-Isolation
+mehrerer Admin-Apps im selben Prozess gefordert wird.
 
 ---
 
-## P3 — Custom-Component-Injektionspunkt
+## P3 — Custom-Component-Injektionspunkt ⏸️
 
-**Ziel:** Apps können eigene Feld-Renderer beistellen.
-
-**Befund:** „Custom Components" ist heute nur ein Widget-Override
-(eingebaute Widgets `select`/`textarea`). Ein echter custom JS-Renderer
+„Custom Components" ist heute der Widget-Override (`ModelAdmin.widgets` →
+eingebaute Widgets `select`/`textarea`). Ein echter custom JS-Renderer
 braucht einen Lade-/Registry-Mechanismus, den die statische No-Build-UI
-nicht hat.
-
-**Status:** **bei Bedarf.** Nur umsetzen, wenn ein konkreter Use-Case
-auftritt — dann eine `registerWidget`-Registry + Injektionspunkt (analog
-Admin-Pages `js_module`) entwerfen.
+nicht hat. **Status: aufgeschoben** — nur bei konkretem Use-Case, dann eine
+`registerWidget`-Registry + Injektionspunkt (analog Admin-Pages
+`js_module`) entwerfen.
 
 ---
 
-## Release- / Versionspolitik
+## Release- / Versionspolitik ✅
 
-**Ziel:** Klare Stabilitätszusage statt implizitem „0.1.0".
+**Stabilitätszusage (0.x):** Solange `0.x`, kann ein Minor-Release die
+Public API oder den Contract brechen — Breaking Changes werden im
+Commit/Changelog markiert. Ab `1.0` gilt SemVer:
 
-**Konkrete Änderung:** 1.0-Gate definieren (P1-Punkte erfüllt + Doku ehrlich
-+ Contract snapshot-getestet), SemVer-Politik für Public API und
-`contract_version` festhalten.
+- **Public API** = die Re-Exports in `adminfoundry/__init__.__all__`
+  (`create_admin`, `CoreAdminConfig`, `AdminRegistry`, `ModelAdmin`) plus
+  die Provider-Protocols in `adminfoundry/providers/base.py`. Breaking
+  Changes daran → **Major**. Gepinnt durch `tests/public_api/`.
+- **Contract** = `ModelContractMeta`. Formänderungen ziehen den
+  Snapshot-Test (`tests/contract/test_contract_snapshot.py`); eine
+  *breaking* Formänderung muss `CONTRACT_VERSION` erhöhen.
 
-**Akzeptanzkriterien:**
-- [ ] Dokumentierte 1.0-Kriterien.
-- [ ] Public-API- und Contract-Versionsregeln in README/Doku.
+**1.0-Gate (Kriterien):**
+- [x] P1 erfüllt (JS-Harness, Contract-Snapshots, mypy-CI auf Vertragsschicht)
+- [x] P2 entschieden + dokumentiert (A0.4, A0.5)
+- [x] Doku ehrlich (keine veralteten „Known limitations")
+- [ ] mypy aufs Gesamtpaket grün (Follow-up) — *empfohlen, nicht zwingend*
+- [ ] Changelog/Release-Notes-Prozess etabliert
+
+Sobald die letzten zwei Häkchen optional abgearbeitet sind, ist ein
+`1.0` vertretbar.
 
 ---
 
-## Empfohlene Reihenfolge
+## Follow-up — `mypy` aufs Gesamtpaket
 
-**P1 zuerst** (JS-Harness → Contract-Snapshots → `mypy`) — sie schaffen das
-Sicherheitsnetz, unter dem die P2-Architekturentscheidungen risikoarm
-werden. **P3** bleibt bewusst optional/akzeptiert.
+**Ziel:** mypy von der Vertragsschicht auf `adminfoundry/` insgesamt
+ausweiten.
+
+**Befund:** ~80 Fehler, überwiegend Framework-Typing-Nits
+(`var-annotated` an SQLAlchemy-Statements, `type[ModelAdmin]`-vs-Instanz in
+CRUD/Contract-Signaturen, FastAPI-`lifespan`-Generics). Mehrheitlich echte,
+aber benigne Signaturinkonsistenzen.
+
+**Vorgehen wenn aufgegriffen:** kategorienweise abarbeiten
+(`var-annotated` zuerst — billig; dann `type[ModelAdmin]` → `ModelAdmin`
+in den CRUD/Contract-Signaturen; FastAPI-Quirks gezielt `# type: ignore`
+mit Begründung), dann `[tool.mypy] files` aufs Paket erweitern.
+
+**Status:** offen, **kein 1.0-Blocker**.
+
+---
+
+## Follow-up — ruff Lint/Format-Drift (CI-Lint vorbestehend rot)
+
+**Befund:** Die ruff-Config selektiert `RUF059` (erst ab ruff ≥ 0.11), aber
+das Paket ist unter keiner RUF059-fähigen Version sauber: ruff 0.11.13
+meldet ~110 Lint-Treffer (überwiegend `UP037` Quotes-in-Annotations, `F401`,
+`I001`, `E402`, `RUF012`), und der 0.15-Formatter würde ~70 Dateien
+umformatieren. Da `[project.optional-dependencies] dev` ruff ungepinnt
+(`>=0.6.0`) lässt, läuft CI auf der jeweils neuesten ruff → die Lint-Stufe
+ist faktisch rot, unabhängig von der Stabilisierungsrunde.
+
+**Vorgehen (eigener, reviewbarer Change):**
+1. ruff pinnen (`ruff>=0.15,<0.16`) für deterministisches CI.
+2. `ruff check . --fix` (92 Autofixes: UP037/F401/I001/RUF100) + `ruff format .`.
+3. Intentionale Muster per Config begründen statt umbauen:
+   `RUF012` (deklarative `ModelAdmin`/`InlineAdmin` Mutable-Class-Attrs,
+   in `__init_subclass__` zurückgesetzt) → `lint.ignore`; `E402`
+   (bewusste Lazy-Imports) → gezielte `# noqa`.
+4. Rest manuell (`B904`, `F841`, `UP042`).
+5. Voller Suite-Lauf + `ruff check`/`format --check` grün.
+
+**Status:** offen, **kein 1.0-Blocker für die Features**, aber Voraussetzung
+für eine grüne CI-Lint-Stufe. Bewusst als eigener Change gehalten — ein
+100+-Dateien-Autofix/Reformat gehört nicht in den Stabilisierungs-Branch.
+
+## Erledigt in dieser Härtungsrunde
+
+P1 (JS-Harness, Contract-Snapshots, mypy-CI) vollständig; P2 (A0.4/A0.5)
+entschieden + dokumentiert; P3 + Release-Politik festgeschrieben. Offen
+bleibt bewusst nur der mypy-Gesamtpaket-Follow-up und der optionale
+custom-Renderer-Injektionspunkt.

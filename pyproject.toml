@@ -71,6 +71,7 @@ dev = [
     "boto3>=1.34",          # tests for the storage_s3 extension (with moto)
     "moto>=5.0",            # in-process S3 mock for storage_s3 tests
     "ruff>=0.6.0",
+    "mypy>=1.11",
     "build>=1.2.0",
 ]
 
@@ -105,6 +106,23 @@ testpaths = ["tests"]
 markers = [
     "postgres: integration tests that require a real PostgreSQL server (set ADMINFOUNDRY_TEST_POSTGRES_URL to enable)",
 ]
+
+# ---------------------------------------------------------------------------
+# Type checking
+# ---------------------------------------------------------------------------
+[tool.mypy]
+# Pre-1.0 stabilization: mypy is enforced on the typed contract surface that
+# consumers depend on — the provider Protocols and the config object. The
+# rest of the package still carries ~80 framework-typing nits (SQLAlchemy /
+# FastAPI generics, type[ModelAdmin]-vs-instance) tracked in
+# docs/stabilization.md; broadening this scope is a follow-up, not a 1.0
+# blocker. ``follow_imports = silent`` keeps transitive noise from those
+# modules out of the report while still checking the targeted files.
+python_version = "3.11"
+files = ["adminfoundry/providers", "adminfoundry/core/config.py"]
+follow_imports = "silent"
+ignore_missing_imports = true
+warn_unused_ignores = true
 
 # ---------------------------------------------------------------------------
 # Linting

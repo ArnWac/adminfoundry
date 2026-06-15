@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, fields, replace
-from typing import Literal, TypeVar, cast, get_args
+from typing import Any, Literal, TypeVar, cast, get_args
 
 TenantResolution = Literal["header", "subdomain"]
 DateFormat = Literal["locale", "iso", "eu", "us", "custom"]
@@ -180,7 +180,7 @@ class CoreAdminConfig:
     user_mode: UserMode = "builtin"
 
     @classmethod
-    def from_env(cls, **overrides: object) -> CoreAdminConfig:
+    def from_env(cls, **overrides: Any) -> CoreAdminConfig:
         config = cls(
             database_url=_env_required("ADMINFOUNDRY_DATABASE_URL"),
             secret_key=_env_required("ADMINFOUNDRY_SECRET_KEY"),
