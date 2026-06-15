@@ -362,6 +362,35 @@ def test_list_badges_default_empty():
 
 
 # ---------------------------------------------------------------------------
+# widget override (Roadmap 5.4)
+# ---------------------------------------------------------------------------
+
+
+def test_widget_override_replaces_adapter_widget():
+    class _A(ModelAdmin):
+        model = _Post
+        widgets = {"summary": "textarea"}
+
+    metas = build_field_metadata(_A())
+    assert _meta_by_name(metas, "summary").widget == "textarea"
+
+
+def test_widget_override_only_affects_named_fields():
+    class _A(ModelAdmin):
+        model = _Post
+        widgets = {"summary": "textarea"}
+
+    metas = build_field_metadata(_A())
+    # title got no override → keeps its adapter default (None here).
+    assert _meta_by_name(metas, "title").widget is None
+
+
+def test_widget_override_default_noop():
+    metas = build_field_metadata(_PostAdmin())
+    assert _meta_by_name(metas, "summary").widget is None
+
+
+# ---------------------------------------------------------------------------
 # list_editable (Roadmap 5.5)
 # ---------------------------------------------------------------------------
 

@@ -538,6 +538,15 @@ def build_field_metadata(
             if norm is not None:
                 f.condition = norm
 
+    # Per-field widget override (Roadmap 5.4) — replaces the adapter's
+    # widget hint when the admin names a real field.
+    widget_overrides = dict(getattr(model_admin, "widgets", {}) or {})
+    if widget_overrides:
+        for f in fields:
+            override = widget_overrides.get(f.name)
+            if isinstance(override, str) and override:
+                f.widget = override
+
     return fields
 
 

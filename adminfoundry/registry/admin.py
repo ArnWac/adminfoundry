@@ -69,6 +69,14 @@ class ModelAdmin:
     #: value falls back to ``"sections"`` in the contract builder.
     form_layout: str = "sections"
 
+    #: Optional per-field widget override (Roadmap 5.4). Maps a field name
+    #: to a built-in widget hint that replaces the adapter-derived one on
+    #: ``FieldMeta.widget`` — e.g. ``{"bio": "textarea"}`` to render a
+    #: String column as a multi-line box. The built-in UI understands
+    #: ``"textarea"`` and ``"select"`` (the latter needs ``choices``);
+    #: unknown names pass through for a custom client to interpret.
+    widgets: dict[str, str] = {}
+
     #: Optional per-field placeholder text (Roadmap 5.4). Maps a field
     #: name to the placeholder string the form input should show when
     #: empty. Surfaced on ``FieldMeta.placeholder`` in the contract;
@@ -160,6 +168,8 @@ class ModelAdmin:
             cls.calculated_fields = {}
         if "placeholders" not in cls.__dict__:
             cls.placeholders = {}
+        if "widgets" not in cls.__dict__:
+            cls.widgets = {}
         if "field_conditions" not in cls.__dict__:
             cls.field_conditions = {}
         if "list_badges" not in cls.__dict__:
