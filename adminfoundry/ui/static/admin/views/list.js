@@ -33,7 +33,13 @@ export async function mountList(root, resource) {
     search: "",
     selectedIds: new Set(),
     items: [],
+    // Active sort, e.g. "title" / "-created_at" / null (server default).
+    ordering: prefs.getOrdering(),
   };
+  // A column is sortable when it maps to a real (non-calculated) field.
+  const fieldsByNameAll = Object.fromEntries(contract.fields.map((f) => [f.name, f]));
+  const isSortable = (colName) =>
+    !!fieldsByNameAll[colName] && !fieldsByNameAll[colName].calculated;
 
   const searchInput = el("input", {
     type: "search",
@@ -193,11 +199,41 @@ export async function mountList(root, resource) {
       el("input", { type: "checkbox", "aria-label": "Select all on this page", onChange: toggleAll }),
     ])];
     for (const colName of cols) {
-      ths.push(el("th", {}, prettify(colName)));
+      if (isSortable(colName)) {
+        const asc = state.ordering === colName;
+        const desc = state.ordering === `-${colName}`;
+        const indicator = asc ? " ▲" : desc ? " ▼" : "";
+        ths.push(
+          el("th", {}, [
+            el(
+              "button",
+              {
+                type: "button",
+                class: "th-sort" + (asc || desc ? " active" : ""),
+                "aria-label": `Sort by ${prettify(colName)}`,
+                onClick: () => toggleSort(colName),
+              },
+              prettify(colName) + indicator
+            ),
+          ])
+        );
+      } else {
+        ths.push(el("th", {}, prettify(colName)));
+      }
     }
     ths.push(el("th", { class: "actions" }, ""));
     clear(tableHead);
     tableHead.appendChild(el("tr", {}, ths));
+  }
+
+  function toggleSort(colName) {
+    // Cycle per column: ascending → descending → off (server default).
+    if (state.ordering === colName) state.ordering = `-${colName}`;
+    else if (state.ordering === `-${colName}`) state.ordering = null;
+    else state.ordering = colName;
+    prefs.setOrdering(state.ordering);
+    state.offset = 0;
+    load();
   }
 
   function renderRows(items) {
@@ -329,6 +365,7 @@ export async function mountList(root, resource) {
         limit: PAGE_SIZE,
         offset: state.offset,
         search: state.search,
+        ordering: state.ordering || "",
       });
       renderHead();
       renderRows(data.items || []);
@@ -409,5 +446,10 @@ function listPrefs(resource) {
       return Array.isArray(v) ? v : [];
     },
     setHiddenColumns: (arr) => write("hiddenCols", arr),
+    getOrdering: () => {
+      const v = read("ordering", null);
+      return typeof v === "string" && v ? v : null;
+    },
+    setOrdering: (v) => write("ordering", v),
   };
 }
