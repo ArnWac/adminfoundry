@@ -76,6 +76,15 @@ class ModelAdmin:
     #: placeholder). Unknown field names are ignored by the builder.
     placeholders: dict[str, str] = {}
 
+    #: Columns editable inline in the list view (Roadmap 5.5). Each name
+    #: must be in :attr:`list_display` and be a writable field (not a
+    #: primary key, read-only, protected, hidden, or calculated column);
+    #: the contract builder drops any that don't qualify. The built-in UI
+    #: renders these cells as inputs and saves edits via the normal
+    #: per-row update endpoint, so all validation / permission / audit
+    #: rules apply unchanged.
+    list_editable: list[str] = []
+
     #: Optional list-view date drill-down (Roadmap 5.5). Names a
     #: ``Date``/``DateTime`` column; the list view then offers a
     #: year → month → day filter over it. Surfaced on
@@ -143,6 +152,7 @@ class ModelAdmin:
             "filter_fields",
             "fieldsets",
             "inlines",
+            "list_editable",
         ):
             if attr not in cls.__dict__:
                 setattr(cls, attr, [])

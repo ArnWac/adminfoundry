@@ -362,6 +362,52 @@ def test_list_badges_default_empty():
 
 
 # ---------------------------------------------------------------------------
+# list_editable (Roadmap 5.5)
+# ---------------------------------------------------------------------------
+
+
+def test_list_editable_keeps_writable_display_columns():
+    class _A(ModelAdmin):
+        model = _Post
+        list_display = ["id", "title", "status"]
+        list_editable = ["title", "status"]
+
+    assert build_model_contract(_A()).list_editable == ["title", "status"]
+
+
+def test_list_editable_drops_columns_not_in_list_display():
+    class _A(ModelAdmin):
+        model = _Post
+        list_display = ["id", "title"]
+        list_editable = ["title", "status"]  # status not displayed
+
+    assert build_model_contract(_A()).list_editable == ["title"]
+
+
+def test_list_editable_drops_primary_key_and_readonly():
+    class _A(ModelAdmin):
+        model = _Post
+        list_display = ["id", "title", "status"]
+        readonly_fields = ["status"]
+        list_editable = ["id", "status", "title"]  # id is PK, status read-only
+
+    assert build_model_contract(_A()).list_editable == ["title"]
+
+
+def test_list_editable_preserves_declaration_order():
+    class _A(ModelAdmin):
+        model = _Post
+        list_display = ["id", "title", "status", "summary"]
+        list_editable = ["summary", "title"]
+
+    assert build_model_contract(_A()).list_editable == ["summary", "title"]
+
+
+def test_list_editable_default_empty():
+    assert build_model_contract(_PostAdmin()).list_editable == []
+
+
+# ---------------------------------------------------------------------------
 # date_hierarchy (Roadmap 5.5)
 # ---------------------------------------------------------------------------
 
