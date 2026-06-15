@@ -35,6 +35,8 @@ export async function mountList(root, resource) {
     items: [],
     // Active sort, e.g. "title" / "-created_at" / null (server default).
     ordering: prefs.getOrdering(),
+    // Active date-hierarchy filter, e.g. "2026" / "2026-03" / null.
+    dh: null,
   };
   // A column is sortable when it maps to a real (non-calculated) field.
   const fieldsByNameAll = Object.fromEntries(contract.fields.map((f) => [f.name, f]));
@@ -165,6 +167,86 @@ export async function mountList(root, resource) {
 
   const displayControls = el("div", { class: "list-controls" }, [densityBtn, columnsMenu]);
 
+  // Date hierarchy (Roadmap 5.5): year → month → day drill-down that
+  // narrows the list via ?dh=. Only shown when the contract declares a
+  // date column. Each deeper level enables only when the level above is set.
+  const dateBar = buildDateBar();
+
+  function buildDateBar() {
+    if (!contract.date_hierarchy) return null;
+
+    const MONTHS = [
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December",
+    ];
+    const pad2 = (n) => String(n).padStart(2, "0");
+
+    const yearInput = el("input", {
+      type: "number",
+      class: "dh-year",
+      placeholder: "Year",
+      "aria-label": "Filter year",
+      min: "1900",
+      max: "9999",
+    });
+    const monthSelect = el(
+      "select",
+      { class: "dh-month", "aria-label": "Filter month", disabled: true },
+      [el("option", { value: "" }, "Month")].concat(
+        MONTHS.map((label, i) => el("option", { value: String(i + 1) }, label))
+      )
+    );
+    const daySelect = el(
+      "select",
+      { class: "dh-day", "aria-label": "Filter day", disabled: true },
+      [el("option", { value: "" }, "Day")].concat(
+        Array.from({ length: 31 }, (_, i) => el("option", { value: String(i + 1) }, String(i + 1)))
+      )
+    );
+    const clearBtn = el("button", { type: "button", class: "btn btn-sm btn-link" }, "Clear");
+
+    function recompute() {
+      const year = yearInput.value.trim();
+      monthSelect.disabled = !year;
+      daySelect.disabled = !year || !monthSelect.value;
+      if (!year) {
+        monthSelect.value = "";
+        daySelect.value = "";
+      }
+      if (!monthSelect.value) daySelect.value = "";
+
+      let dh = null;
+      if (year) {
+        dh = year;
+        if (monthSelect.value) {
+          dh += `-${pad2(monthSelect.value)}`;
+          if (daySelect.value) dh += `-${pad2(daySelect.value)}`;
+        }
+      }
+      state.dh = dh;
+      state.offset = 0;
+      load();
+    }
+
+    yearInput.addEventListener("change", recompute);
+    monthSelect.addEventListener("change", recompute);
+    daySelect.addEventListener("change", recompute);
+    clearBtn.addEventListener("click", () => {
+      yearInput.value = "";
+      monthSelect.value = "";
+      daySelect.value = "";
+      recompute();
+    });
+
+    return el("div", { class: "date-hierarchy" }, [
+      el("span", { class: "field-hint" }, `${prettify(contract.date_hierarchy)}:`),
+      yearInput,
+      monthSelect,
+      daySelect,
+      clearBtn,
+    ]);
+  }
+
   const layout = el("div", {}, [
     el("div", { class: "page-header" }, [
       el("h1", {}, contract.label_plural),
@@ -182,6 +264,7 @@ export async function mountList(root, resource) {
               selectedCount,
             ])
           : null,
+        dateBar,
         displayControls,
       ]),
       el("div", { style: "overflow-x:auto" }, table),
@@ -366,6 +449,7 @@ export async function mountList(root, resource) {
         offset: state.offset,
         search: state.search,
         ordering: state.ordering || "",
+        dh: state.dh || "",
       });
       renderHead();
       renderRows(data.items || []);

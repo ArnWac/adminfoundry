@@ -829,3 +829,11 @@ table.compact-table td {
 }
 .th-sort:hover { color: var(--accent); }
 .th-sort.active { color: var(--accent); }
+
+/* Date hierarchy drill-down (Roadmap 5.5). */
+.date-hierarchy {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.date-hierarchy .dh-year { width: 5.5rem; }
