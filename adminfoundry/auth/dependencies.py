@@ -44,6 +44,8 @@ async def get_current_user(
             secret_key=config.secret_key,
             algorithm=config.jwt_algorithm,
             allow_impersonation=True,
+            issuer=config.jwt_issuer,
+            audience=config.jwt_audience,
         )
         user_id = get_subject_user_id(payload)
         token_version = get_token_version(payload)

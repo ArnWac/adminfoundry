@@ -24,15 +24,15 @@ geparkt.
 
 | Prio | ID | Thema | Status |
 |---|---|---|---|
-| **P0** | R1 | [`search_path` auf der Request-Session](#p0--r1-search_path-auf-der-request-session) | ⬜ offen |
-| **P0** | R2 | [HTTP-PG-Isolationstest](#p0--r2-http-pg-isolationstest) | ⬜ offen |
-| **P0** | R3 | [Doku-Zusagen zur Isolation korrigieren](#p0--r3-doku-zusagen-zur-isolation-korrigieren) | ⬜ offen |
-| **P1** | R4 | [`test-postgres` als Build-Gate](#p1--r4-test-postgres-als-build-gate) | ⬜ offen |
-| **P1** | R5 | [CHANGELOG.md + SECURITY.md](#p1--r5-changelogmd--securitymd) | ⬜ offen |
-| **P1** | R6 | [Coverage messen + CI-Badge](#p1--r6-coverage-messen--ci-badge) | ⬜ offen |
-| **P2** | R7 | [Verteilter Rate-Limiter](#p2--r7-verteilter-rate-limiter) | ⬜ offen |
-| **P2** | R8 | [JWT-Härtung: aud/iss](#p2--r8-jwt-härtung-audiss) | ⬜ offen |
-| **P2** | R9 | [Tenant-Cache-Invalidierung](#p2--r9-tenant-cache-invalidierung) | ⬜ offen |
+| **P0** | R1 | [`search_path` auf der Request-Session](#p0--r1-search_path-auf-der-request-session) | ✅ erledigt |
+| **P0** | R2 | [HTTP-PG-Isolationstest](#p0--r2-http-pg-isolationstest) | ✅ erledigt |
+| **P0** | R3 | [Doku-Zusagen zur Isolation korrigieren](#p0--r3-doku-zusagen-zur-isolation-korrigieren) | ✅ erledigt |
+| **P1** | R4 | [`test-postgres` als Build-Gate](#p1--r4-test-postgres-als-build-gate) | ✅ erledigt |
+| **P1** | R5 | [CHANGELOG.md + SECURITY.md](#p1--r5-changelogmd--securitymd) | ✅ erledigt |
+| **P1** | R6 | [Coverage messen + CI-Badge](#p1--r6-coverage-messen--ci-badge) | ✅ erledigt |
+| **P2** | R7 | [Verteilter Rate-Limiter](#p2--r7-verteilter-rate-limiter) | ✅ erledigt |
+| **P2** | R8 | [JWT-Härtung: aud/iss](#p2--r8-jwt-härtung-audiss) | ✅ erledigt |
+| **P2** | R9 | [Tenant-Cache-Invalidierung](#p2--r9-tenant-cache-invalidierung) | ✅ erledigt |
 | **P3** | R10 | [Release-Workflow + Wheel-Smoke](#p3--r10-release-workflow--wheel-smoke) | ⬜ offen |
 | **P3** | R11 | [JS-Tests ausbauen](#p3--r11-js-tests-ausbauen) | ⬜ offen |
 | **P3** | R12 | [Slug-Normalisierung](#p3--r12-slug-normalisierung) | ⬜ offen |
@@ -381,10 +381,10 @@ Commit/Changelog markiert. Ab `1.0` gilt SemVer:
 - [x] Härtung P1 erfüllt (JS-Harness, Contract-Snapshots, mypy-CI auf Vertragsschicht)
 - [x] Härtung P2 entschieden + dokumentiert (Field-Visibility-Resolver, User-Entkopplungs-Grenze)
 - [x] Doku ehrlich bei „Known limitations"
-- [ ] **R1–R4 erledigt** — tenant-lokales CRUD über den HTTP-Pfad auf echtem
-  PostgreSQL nachweislich isoliert und im Build gegated. **Harter
+- [x] **R1–R4 erledigt** — tenant-lokales CRUD über den HTTP-Pfad auf echtem
+  PostgreSQL nachweislich isoliert (Test) und im Build gegated. **Harter
   1.0-Blocker** (und Voraussetzung für jede Multi-Tenant-Produktion).
-- [ ] R5 — Changelog/Release-Notes-Prozess etabliert
+- [x] R5 — Changelog/Release-Notes-Prozess etabliert (`CHANGELOG.md`)
 - [ ] mypy aufs Gesamtpaket grün (Follow-up) — *empfohlen, nicht zwingend*
 
 ---

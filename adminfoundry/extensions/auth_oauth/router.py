@@ -263,6 +263,8 @@ def _attach_callback_handler(
             algorithm=config.jwt_algorithm,
             expires_minutes=config.access_token_expire_minutes,
             token_version=token_version,
+            issuer=config.jwt_issuer,
+            audience=config.jwt_audience,
         )
         refresh_token = create_refresh_token(
             principal.id,
@@ -270,6 +272,8 @@ def _attach_callback_handler(
             algorithm=config.jwt_algorithm,
             expires_minutes=config.refresh_token_expire_minutes,
             token_version=token_version,
+            issuer=config.jwt_issuer,
+            audience=config.jwt_audience,
         )
 
         # Fragment-redirect so the tokens never appear in:

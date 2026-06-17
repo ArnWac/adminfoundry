@@ -105,6 +105,14 @@ class CoreAdminConfig:
     admin_ui_path: str = "/admin"
 
     jwt_algorithm: str = "HS256"
+    #: Optional JWT ``iss`` / ``aud`` hardening (Review R8). When set, every
+    #: token the framework mints carries the claim and every decode validates
+    #: it (a token with a missing/wrong ``iss``/``aud`` is rejected). ``None``
+    #: (the default) keeps the pre-R8 behaviour — no claim set, none checked —
+    #: which is fine for a single-service, single-secret deployment. Set these
+    #: once tokens are shared across services/audiences.
+    jwt_issuer: str | None = None
+    jwt_audience: str | None = None
     access_token_expire_minutes: int = 60
     #: Refresh-token lifetime (Roadmap 3.1). Default 7 days. The
     #: refresh token is long-lived and exchanged at ``/auth/refresh``
@@ -135,6 +143,14 @@ class CoreAdminConfig:
 
     tenant_resolution: TenantResolution = "header"
     tenant_header_name: str = "X-Tenant-Slug"
+    #: How long (seconds) a resolved tenant is cached per process (Review R9).
+    #: The cache holds the tenant's ``is_active`` / ``allowed_cidrs``, so this
+    #: bounds how long a deactivation or CIDR change can be served stale by a
+    #: given worker. Lower it for faster propagation; ``0`` disables caching
+    #: (a DB hit per request). Cross-process changes (e.g. the CLI) propagate
+    #: within this window; same-process mutations can call
+    #: ``adminfoundry.tenancy.resolver.invalidate_tenant`` for immediate effect.
+    tenant_cache_ttl_seconds: int = 30
 
     default_language: str = "en"
     default_date_format: DateFormat = "locale"
@@ -206,6 +222,8 @@ class CoreAdminConfig:
                 "ADMINFOUNDRY_JWT_ALGORITHM",
                 "HS256",
             ),
+            jwt_issuer=os.getenv("ADMINFOUNDRY_JWT_ISSUER") or None,
+            jwt_audience=os.getenv("ADMINFOUNDRY_JWT_AUDIENCE") or None,
             access_token_expire_minutes=_env_int(
                 "ADMINFOUNDRY_ACCESS_TOKEN_EXPIRE_MINUTES",
                 60,
@@ -242,6 +260,10 @@ class CoreAdminConfig:
             tenant_header_name=_env_optional(
                 "ADMINFOUNDRY_TENANT_HEADER_NAME",
                 "X-Tenant-Slug",
+            ),
+            tenant_cache_ttl_seconds=_env_int(
+                "ADMINFOUNDRY_TENANT_CACHE_TTL_SECONDS",
+                30,
             ),
             default_language=_env_optional(
                 "ADMINFOUNDRY_DEFAULT_LANGUAGE",

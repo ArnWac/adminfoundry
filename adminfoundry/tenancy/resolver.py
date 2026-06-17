@@ -11,12 +11,25 @@ from starlette.requests import Request
 from adminfoundry.models.tenant import Tenant
 from adminfoundry.tenancy.context import TenantContext
 
-_TENANT_TTL = 30  # seconds
+_DEFAULT_TENANT_TTL = 30  # seconds; overridable via config.tenant_cache_ttl_seconds
 _tenant_cache: dict[str, tuple] = {}
 
 
 def clear_tenant_cache() -> None:
+    """Drop the whole per-process tenant cache."""
     _tenant_cache.clear()
+
+
+def invalidate_tenant(slug: str) -> None:
+    """Evict one slug from the per-process cache (Review R9).
+
+    Call this from a *same-process* mutation path (e.g. a Tenant ModelAdmin
+    write hook) right after changing a tenant's ``is_active`` / ``allowed_cidrs``
+    so the change takes effect immediately instead of after the TTL. Note this
+    only clears the calling process's cache — out-of-process changes (the CLI,
+    another worker) still propagate within ``tenant_cache_ttl_seconds``.
+    """
+    _tenant_cache.pop(slug, None)
 
 
 def _mem_get(slug: str) -> tuple[bool, TenantContext | None]:
@@ -26,8 +39,13 @@ def _mem_get(slug: str) -> tuple[bool, TenantContext | None]:
     return False, None
 
 
-def _mem_set(slug: str, ctx: TenantContext | None) -> None:
-    _tenant_cache[slug] = (ctx, time.monotonic() + _TENANT_TTL)
+def _mem_set(slug: str, ctx: TenantContext | None, ttl: float = _DEFAULT_TENANT_TTL) -> None:
+    # ttl <= 0 means "do not cache" — the entry expires immediately so the
+    # next lookup misses and re-reads from the DB.
+    if ttl <= 0:
+        _tenant_cache.pop(slug, None)
+        return
+    _tenant_cache[slug] = (ctx, time.monotonic() + ttl)
 
 
 def _get_resolution_strategy(request: Request) -> tuple[str, str]:
@@ -65,7 +83,8 @@ async def resolve_tenant(request: Request) -> TenantContext | None:
             result = await session.execute(select(Tenant).where(Tenant.slug == slug))
             tenant = result.scalar_one_or_none()
         ctx = TenantContext.from_orm(tenant) if tenant is not None else None
-        _mem_set(slug, ctx)
+        ttl = getattr(runtime.config, "tenant_cache_ttl_seconds", _DEFAULT_TENANT_TTL)
+        _mem_set(slug, ctx, ttl)
 
     return ctx
 

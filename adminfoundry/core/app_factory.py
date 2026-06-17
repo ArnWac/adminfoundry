@@ -40,6 +40,7 @@ def create_admin(
     tenant_provider: TenantProvider | None = None,
     password_reset_notifier=None,
     storage=None,
+    login_rate_limiter=None,
     **fastapi_kwargs,
 ) -> FastAPI:
     config = config or CoreAdminConfig.from_env()
@@ -104,6 +105,7 @@ def create_admin(
         providers=providers,
         password_reset_notifier=password_reset_notifier,
         storage=storage,
+        login_rate_limiter=login_rate_limiter,
     )
 
     # Mirror the explicit ``password_reset_notifier`` into the generic
