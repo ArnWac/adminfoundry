@@ -113,6 +113,9 @@ async def login(
     a pure OAuth/OIDC provider) makes this endpoint return 501.
     """
     email_key = payload.email.lower()
+    # A shared backend (Review R7) wins over the in-memory default so
+    # multi-worker deployments throttle across processes.
+    limiter = getattr(request.app.state.adminfoundry, "login_rate_limiter", None) or _login_limiter
     provider = request.app.state.adminfoundry.providers.auth
 
     login_fn = getattr(provider, "login", None)
@@ -122,7 +125,7 @@ async def login(
             detail="The configured auth provider does not support password login.",
         )
 
-    if await _login_limiter.is_limited(email_key):
+    if await limiter.is_limited(email_key):
         await _audit_login(
             request,
             action=LOGIN_FAILURE,
@@ -141,7 +144,7 @@ async def login(
             request=request,
         )
     except LoginError as exc:
-        await _login_limiter.record_failure(email_key)
+        await limiter.record_failure(email_key)
         http_status, detail = _LOGIN_FAILURE_STATUS.get(
             exc.reason, (status.HTTP_401_UNAUTHORIZED, "Invalid credentials.")
         )
@@ -177,6 +180,8 @@ async def login(
             secret_key=config.secret_key,
             algorithm=config.jwt_algorithm,
             token_version=user_for_mfa.token_version,
+            issuer=config.jwt_issuer,
+            audience=config.jwt_audience,
         )
         # Audit at LOGIN_SUCCESS — the password factor passed; the
         # second-factor outcome will produce its own audit row at
@@ -240,6 +245,8 @@ async def refresh(
             payload.refresh_token,
             secret_key=config.secret_key,
             algorithm=config.jwt_algorithm,
+            issuer=config.jwt_issuer,
+            audience=config.jwt_audience,
         )
         user_id = get_subject_user_id(token_payload)
         token_version = get_token_version(token_payload)
@@ -284,6 +291,8 @@ async def refresh(
         algorithm=config.jwt_algorithm,
         expires_minutes=config.access_token_expire_minutes,
         token_version=user.token_version,
+        issuer=config.jwt_issuer,
+        audience=config.jwt_audience,
     )
     new_refresh = create_refresh_token(
         user.id,
@@ -291,6 +300,8 @@ async def refresh(
         algorithm=config.jwt_algorithm,
         expires_minutes=config.refresh_token_expire_minutes,
         token_version=user.token_version,
+        issuer=config.jwt_issuer,
+        audience=config.jwt_audience,
     )
     return TokenResponse(access_token=new_access, refresh_token=new_refresh)
 

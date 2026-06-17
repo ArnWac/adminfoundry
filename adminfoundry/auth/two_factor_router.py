@@ -239,6 +239,8 @@ async def two_factor_login(
             payload.mfa_token,
             secret_key=config.secret_key,
             algorithm=config.jwt_algorithm,
+            issuer=config.jwt_issuer,
+            audience=config.jwt_audience,
         )
         user_id = get_subject_user_id(challenge_payload)
         token_version = get_token_version(challenge_payload)
@@ -317,6 +319,8 @@ async def two_factor_login(
         algorithm=config.jwt_algorithm,
         expires_minutes=config.access_token_expire_minutes,
         token_version=user.token_version,
+        issuer=config.jwt_issuer,
+        audience=config.jwt_audience,
     )
     refresh = create_refresh_token(
         user.id,
@@ -324,6 +328,8 @@ async def two_factor_login(
         algorithm=config.jwt_algorithm,
         expires_minutes=config.refresh_token_expire_minutes,
         token_version=user.token_version,
+        issuer=config.jwt_issuer,
+        audience=config.jwt_audience,
     )
 
     await _audit_mfa_login(

@@ -29,6 +29,8 @@ def _create_token(
     algorithm: str,
     expires_delta: timedelta,
     token_type: str,
+    issuer: str | None = None,
+    audience: str | None = None,
 ) -> str:
     now = _now_utc()
 
@@ -41,6 +43,12 @@ def _create_token(
             "type": token_type,
         }
     )
+    # Review R8: stamp iss/aud only when the deployment configured them, so
+    # the default (None) keeps the historical claim-free token shape.
+    if issuer is not None:
+        token_payload["iss"] = issuer
+    if audience is not None:
+        token_payload["aud"] = audience
 
     return jwt.encode(
         token_payload,
@@ -56,6 +64,8 @@ def create_access_token(
     algorithm: str,
     expires_minutes: int,
     token_version: int = 0,
+    issuer: str | None = None,
+    audience: str | None = None,
 ) -> str:
     """
     Create a normal user access token.
@@ -77,6 +87,8 @@ def create_access_token(
         algorithm=algorithm,
         expires_delta=timedelta(minutes=expires_minutes),
         token_type=ACCESS_TOKEN_TYPE,
+        issuer=issuer,
+        audience=audience,
     )
 
 
@@ -87,6 +99,8 @@ def create_refresh_token(
     algorithm: str,
     expires_minutes: int,
     token_version: int = 0,
+    issuer: str | None = None,
+    audience: str | None = None,
 ) -> str:
     """Create a long-lived refresh token (Roadmap 3.1).
 
@@ -104,6 +118,8 @@ def create_refresh_token(
         algorithm=algorithm,
         expires_delta=timedelta(minutes=expires_minutes),
         token_type=REFRESH_TOKEN_TYPE,
+        issuer=issuer,
+        audience=audience,
     )
 
 
@@ -112,11 +128,15 @@ def decode_refresh_token(
     *,
     secret_key: str,
     algorithm: str,
+    issuer: str | None = None,
+    audience: str | None = None,
 ) -> dict[str, Any]:
     """Decode + type-check a refresh token. Raises :class:`TokenError`
     for any non-refresh token so an access token can't be replayed at
     the refresh endpoint."""
-    payload = decode_token(token, secret_key=secret_key, algorithm=algorithm)
+    payload = decode_token(
+        token, secret_key=secret_key, algorithm=algorithm, issuer=issuer, audience=audience
+    )
     if payload.get("type") != REFRESH_TOKEN_TYPE:
         raise TokenError("Invalid token type")
     return payload
@@ -133,6 +153,8 @@ def create_mfa_challenge_token(
     algorithm: str,
     expires_minutes: int = 5,
     token_version: int = 0,
+    issuer: str | None = None,
+    audience: str | None = None,
 ) -> str:
     """Short-lived token returned by ``/auth/login`` when the user has
     2FA enabled (Roadmap 3.4b).
@@ -152,6 +174,8 @@ def create_mfa_challenge_token(
         algorithm=algorithm,
         expires_delta=timedelta(minutes=expires_minutes),
         token_type=MFA_CHALLENGE_TOKEN_TYPE,
+        issuer=issuer,
+        audience=audience,
     )
 
 
@@ -160,11 +184,15 @@ def decode_mfa_challenge_token(
     *,
     secret_key: str,
     algorithm: str,
+    issuer: str | None = None,
+    audience: str | None = None,
 ) -> dict[str, Any]:
     """Decode + type-check an MFA challenge token. Raises :class:`TokenError`
     for any other token type so a stale access token can't be replayed
     at ``/auth/2fa/login``."""
-    payload = decode_token(token, secret_key=secret_key, algorithm=algorithm)
+    payload = decode_token(
+        token, secret_key=secret_key, algorithm=algorithm, issuer=issuer, audience=audience
+    )
     if payload.get("type") != MFA_CHALLENGE_TOKEN_TYPE:
         raise TokenError("Invalid token type")
     return payload
@@ -179,6 +207,8 @@ def create_impersonation_token(
     algorithm: str,
     expires_minutes: int = 60,
     token_version: int = 0,
+    issuer: str | None = None,
+    audience: str | None = None,
 ) -> str:
     """
     Create a short-lived impersonation token.
@@ -206,6 +236,8 @@ def create_impersonation_token(
         algorithm=algorithm,
         expires_delta=timedelta(minutes=expires_minutes),
         token_type=IMPERSONATION_TOKEN_TYPE,
+        issuer=issuer,
+        audience=audience,
     )
 
 
@@ -214,12 +246,34 @@ def decode_token(
     *,
     secret_key: str,
     algorithm: str,
+    issuer: str | None = None,
+    audience: str | None = None,
 ) -> dict[str, Any]:
+    """Decode + verify a JWT.
+
+    ``alg`` is pinned to ``algorithm`` and ``exp`` is enforced by the library.
+    When ``issuer`` / ``audience`` are supplied (Review R8), the matching
+    ``iss`` / ``aud`` claim is verified too — a token missing or mismatching a
+    required claim raises :class:`TokenError`. Passing ``None`` (the default)
+    skips that claim, preserving the historical behaviour.
+    """
+    # When a claim is configured it must be *present* — not just "valid if
+    # present". jose only checks aud/iss when they exist unless told to
+    # require them, so a token minted before the deployment required the claim
+    # would otherwise still pass.
+    options: dict[str, bool] = {}
+    if audience is not None:
+        options["require_aud"] = True
+    if issuer is not None:
+        options["require_iss"] = True
     try:
         return jwt.decode(
             token,
             secret_key,
             algorithms=[algorithm],
+            issuer=issuer,
+            audience=audience,
+            options=options,
         )
     except JWTError as exc:
         raise TokenError("Invalid token") from exc
@@ -231,6 +285,8 @@ def decode_access_token(
     secret_key: str,
     algorithm: str,
     allow_impersonation: bool = True,
+    issuer: str | None = None,
+    audience: str | None = None,
 ) -> dict[str, Any]:
     """
     Decode an access-like token.
@@ -246,6 +302,8 @@ def decode_access_token(
         token,
         secret_key=secret_key,
         algorithm=algorithm,
+        issuer=issuer,
+        audience=audience,
     )
 
     token_type = payload.get("type")

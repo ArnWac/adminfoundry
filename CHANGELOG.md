@@ -31,6 +31,15 @@ shape change bumps `CONTRACT_VERSION`.
 - `CHANGELOG.md` and `SECURITY.md`.
 - Test coverage measurement (`pytest-cov`) in CI and a CI status badge in the
   README.
+- **Distributed login rate limiter:** `RedisLoginRateLimiter` (duck-typed
+  against any async Redis client) behind the existing `RateLimiterBackend`
+  Protocol, plus a `rate-limit-redis` extra. `create_admin(login_rate_limiter=…)`
+  swaps it in; the in-memory default is unchanged.
+- **JWT `iss`/`aud` hardening:** optional `jwt_issuer` / `jwt_audience` config.
+  When set, every minted token carries the claim and every decode requires +
+  verifies it; unset keeps the historic claim-free behaviour.
+- `invalidate_tenant(slug)` and a configurable `tenant_cache_ttl_seconds`
+  (default 30) for the per-process tenant resolution cache.
 
 ### Changed
 - CI: the `build` job now depends on `test-postgres`, so PostgreSQL

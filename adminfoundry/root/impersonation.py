@@ -113,6 +113,8 @@ async def impersonate(
         algorithm=config.jwt_algorithm,
         expires_minutes=duration,
         token_version=target.token_version,
+        issuer=config.jwt_issuer,
+        audience=config.jwt_audience,
     )
 
     from adminfoundry.auth.tokens import decode_access_token
@@ -122,6 +124,8 @@ async def impersonate(
         secret_key=config.secret_key,
         algorithm=config.jwt_algorithm,
         allow_impersonation=True,
+        issuer=config.jwt_issuer,
+        audience=config.jwt_audience,
     )
     jti = get_token_jti(decoded)
 
