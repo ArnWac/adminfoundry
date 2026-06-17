@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-import uuid
 
 from sqlalchemy import select
 from starlette.requests import Request
@@ -97,17 +96,3 @@ async def resolve_tenant(request: Request) -> TenantContext | None:
         _mem_set(slug, ctx, ttl)
 
     return ctx
-
-
-async def resolve_impersonation_tenant(
-    payload: dict, current_tenant: TenantContext | None, db
-) -> TenantContext | None:
-    """Return TenantContext for a same-origin impersonation token."""
-    if current_tenant is not None:
-        return current_tenant
-    if not (payload.get("impersonated_by") and payload.get("tenant_id")):
-        return None
-    tenant = (
-        await db.execute(select(Tenant).where(Tenant.id == uuid.UUID(payload["tenant_id"])))
-    ).scalar_one_or_none()
-    return TenantContext.from_orm(tenant) if tenant is not None else None

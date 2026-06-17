@@ -52,7 +52,7 @@ R14–R17 offen. Phasen 6/7 bleiben geparkt.
 | **P1** | R14 | [XSS-Härtung: CSP + Token-Storage](#p1--r14-xss-härtung-csp--token-storage) | ⬜ offen |
 | **P2** | R15 | [Login-Enumeration + Default-Limiter-Keying](#p2--r15-login-enumeration--default-limiter-keying) | ⬜ offen |
 | **P2** | R16 | [Proxy-/Client-IP (CIDR-Allowlist, Audit)](#p2--r16-proxy--client-ip) | ⬜ offen |
-| **P3** | R17 | [Toten/redundanten Code aufräumen](#p3--r17-totenredundanten-code-aufräumen) | 🟡 teilweise (clear()-Fix lokal) |
+| **P3** | R17 | [Toten/redundanten Code aufräumen](#p3--r17-totenredundanten-code-aufräumen) | ✅ erledigt (Provider-Session-Merge als Folgeschritt offen) |
 | **—** | — | [Bewusst NICHT umgesetzt](#bewusst-nicht-umgesetzt) | entschieden |
 
 ---
@@ -179,8 +179,7 @@ ausführt (Env-Var `ADMINFOUNDRY_TEST_POSTGRES_URL` ist gesetzt, ci.yml:93).
 **Test:** Ein bewusst gebrochener Isolationsfall lässt den `build`-Job rot
 werden (manuell verifizieren).
 
-**Status:** ⬜ offen · sinnvollerweise direkt nach R2 (sonst gated der Job
-einen noch fehlenden Test).
+**Status:** ✅ erledigt — `build.needs` enthält `test-postgres`.
 
 ---
 
@@ -200,7 +199,7 @@ ersten Eintrag; die 0.x-Stabilitätszusage aus der
 [Release-Politik](#release--versionspolitik--10-gate) referenzieren.
 `SECURITY.md` mit Meldeweg + unterstützten Versionen.
 
-**Status:** ⬜ offen.
+**Status:** ✅ erledigt.
 
 ---
 
@@ -218,7 +217,7 @@ Isolations-/Negativpfade).
 Artefakt; CI-Status-Badge im README. Optional Schwellwert ohne Hard-Fail
 (Reporting, kein Gate).
 
-**Status:** ⬜ offen.
+**Status:** ✅ erledigt.
 
 ---
 
@@ -248,7 +247,7 @@ duck-typed (kein harter `redis`-Import im Core). IP-/Tupel-Keying bleibt offen.
 (`tests/extensions/rate_limit_redis/test_backend.py`); Fenster-/Reset-/
 Clear-Verhalten.
 
-**Status:** ⬜ offen.
+**Status:** ✅ erledigt.
 
 ---
 
@@ -274,7 +273,7 @@ abwärtskompatibel optional halten.
 **Test:** Token mit falschem `aud`/`iss` wird abgelehnt; ohne Konfiguration
 unverändertes Verhalten.
 
-**Status:** ⬜ offen.
+**Status:** ✅ erledigt.
 
 ---
 
@@ -297,7 +296,7 @@ cachen (nur die Slug→Schema-Auflösung cachen). TTL konfigurierbar machen.
 **Test:** Nach Deaktivierung eines Tenants liefert der nächste Request 403
 (kein 30-s-Fenster).
 
-**Status:** ⬜ offen.
+**Status:** ✅ erledigt (TTL konfigurierbar + `invalidate_tenant`).
 
 ---
 
@@ -315,7 +314,7 @@ Wheel wird nicht in einer frischen Umgebung getestet.
 (PyPI/TestPyPI); Smoke-Schritt: Wheel in frischer venv installieren,
 `python -c "import adminfoundry"` + `adminfoundry --help`.
 
-**Status:** ⬜ offen.
+**Status:** ✅ erledigt (`.github/workflows/release.yml`).
 
 ---
 
@@ -447,25 +446,27 @@ konfiguriertem Trusted Proxy; ohne Konfiguration unverändert.
 ## P3 — R17: Toten/redundanten Code aufräumen
 
 **Problem:**
-- `resolve_impersonation_tenant` ([tenancy/resolver.py:102](../adminfoundry/tenancy/resolver.py))
-  ist **tot** (keine Aufrufer).
+- `resolve_impersonation_tenant` in `tenancy/resolver.py` war **tot** (keine
+  Aufrufer) — **entfernt** (samt ungenutztem `uuid`-Import).
+- `clear()`-Inkonsistenz im Login (nutzte den Modul-Default statt des
+  injizierten Limiters) — **gefixt** ([auth/router.py](../adminfoundry/auth/router.py)).
 - `BuiltinPermissionProvider.get_permissions` öffnet pro Request eine zweite
   Session ([providers/permissions.py:59](../adminfoundry/providers/permissions.py));
   seit R1 ist die Request-Session bereits gescoped → ließe sich
-  zusammenführen (zweiter Pool-Hop entfällt).
-- `clear()`-Inkonsistenz im Login (nutzte den Modul-Default statt des
-  injizierten Limiters) — **lokal bereits gefixt** ([auth/router.py:160](../adminfoundry/auth/router.py)).
+  zusammenführen (zweiter Pool-Hop entfällt). **Bewusst aufgeschoben** —
+  würde die `PermissionProvider`-Protocol-Signatur ändern und den gerade
+  CI-bestätigten Isolationspfad anfassen; gehört in einen eigenen, getesteten
+  Schritt.
 
 **Risiko:** Niedrig (Wartbarkeit; der `clear()`-Bug war ein echter
 Korrektheitsfehler mit Redis-Backend).
 
-**Änderung:** Toten Code entfernen; Provider-Doppel-Session als eigener,
-getesteter Schritt zusammenführen; `clear()`-Fix committen.
-
 **Test:** Integrationstest „injizierter Limiter wird auf allen drei Pfaden
-(is_limited/record/clear) benutzt".
+(is_limited/record/clear) benutzt" — ergänzt
+([tests/auth/test_login_limiter_injection.py](../tests/auth/test_login_limiter_injection.py)).
 
-**Status:** 🟡 teilweise — `clear()`-Fix lokal, Rest offen.
+**Status:** ✅ erledigt — toter Code entfernt, `clear()`-Fix + Test drin.
+Provider-Doppel-Session bewusst als separater Folgeschritt offen.
 
 ---
 
