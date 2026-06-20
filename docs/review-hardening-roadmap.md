@@ -1,6 +1,6 @@
 # asterion — Roadmap & Hardening (konsolidiert)
 
-Stand: 2026-06-18 · bezieht sich auf `asterion` 0.1.0
+Stand: 2026-06-19 · bezieht sich auf `asterion` 0.1.0
 
 Dieses Dokument konsolidiert die frühere `roadmap.md` (Feature-Phasen,
 Non-Goals) und `stabilization.md` (Pre-1.0-Härtung) und führt sie mit den
@@ -486,6 +486,92 @@ Provider-Doppel-Session bewusst als separater Folgeschritt offen.
 
 ---
 
+## Anwendungs-Integration — Terminal-/PIN-Auth (Muster, kein Core-Feature)
+
+**Kontext:** Die erste Fachanwendung (Zeiterfassung) braucht Stempel-Terminals,
+an denen sich Mitarbeiter per PIN ein-/ausstempeln. Naheliegend wäre eine
+„zweite Authentifizierung pro Router". Das ist **nicht** nötig und wird auch
+**nicht** in den Core gezogen — analog zu „keine Domänenlogik im Core". Die
+Lösung entsteht durch sauberes Modellieren auf den bestehenden
+Erweiterungspunkten.
+
+**Kernentscheidung — zwei Identitätsschichten trennen:** Am Terminal fallen
+zwei verschiedene „Wer"-Fragen zusammen, die getrennt gehören:
+
+1. **Wer ist das Gerät?** Das Terminal authentifiziert sich gegenüber dem
+   Backend (Maschinen-Identität).
+2. **Wer stempelt gerade?** Der Mitarbeiter identifiziert sich per PIN. Die PIN
+   authentifiziert *nicht* den Request — sie wählt nur den handelnden
+   Mitarbeiter innerhalb der bereits vertrauenswürdigen Geräte-Session aus.
+
+**Muster:**
+
+- **Terminal = ein `User`** (Maschinen-/Service-Account in der bestehenden
+  `users`-Tabelle, [models/user.py](../asterion/models/user.py)), mit eng
+  geschnittenen Permissions (nur z. B. `app.timeclock.punch`, sonst nichts),
+  `is_superadmin=False`.
+- **Mitarbeiter = `Employee`-Fachmodell** (App-seitig, `TenantModel`) mit
+  `pin_hash` (bcrypt, nie Klartext) und **optionalem, meist `NULL`-em**
+  `user_id`. Das ist exakt der unter [P2 dokumentierte
+  User-Entkopplungs-Fall](#abgeschlossen-historie) („nicht jeder Mitarbeiter
+  besitzt einen Login") — die PIN lebt auf dem `Employee`, nicht auf einem
+  `User`.
+
+**Was dadurch aus Asterion wiederverwendet wird — ohne Neubau:**
+
+- **Keine zweite Auth-Pipeline.** Der Terminal-Request läuft über die normale
+  Auth (`require_admin_context` → der eine `ProviderSet.auth`,
+  [core/runtime.py:38](../asterion/core/runtime.py)). Die PIN-Prüfung ist
+  App-Logik *im Handler*, kein zweiter `AuthProvider`.
+- **Geräte-Sperre** über `User.is_active` (gestohlenes/außer Dienst gestelltes
+  Terminal sofort tot).
+- **Token-Widerruf** über `token_version` + per-`jti`-Revocation
+  ([auth/revocation.py](../asterion/auth/revocation.py)).
+- **Zugriffsbegrenzung** über die granularen Permission-Keys — das Terminal
+  erreicht ausschließlich den Punch-Endpunkt.
+- **Audit** trägt automatisch `actor_user_id` = Terminal; der konkrete
+  Mitarbeiter wandert als `changes`/`record_id` in die Audit-Zeile
+  ([audit/service.py](../asterion/audit/service.py)).
+
+**Ablauf:**
+
+```
+Terminal ──[Asterion-Auth: Terminal-User-Token]──► POST /timeclock/punch
+                                                    Body: {employee_id, pin, idempotency_key}
+Handler:
+  1. Asterion authentifiziert den Request als Terminal-User   (Standard)
+  2. Permission-Gate app.timeclock.punch                      (Standard)
+  3. App verifiziert pin gegen Employee.pin_hash              (App-Logik)
+  4. bucht Stempelung, Audit: actor=Terminal, employee=…      (App-Logik)
+```
+
+**Warum nicht „Mitarbeiter = User, PIN = Passwort":** (a) Eine kurze PIN als
+*alleinige* Auth über das offene Netz ist unsicher — sie funktioniert nur, weil
+das Gerät vertrauenswürdig und authentifiziert ist; die Geräte-Identität trägt
+die Sicherheit. (b) Es würde jedem Stempler einen `User` aufzwingen, was die
+dokumentierte User-Entkopplung verletzt.
+
+**Hinweise / App-seitig offen:**
+
+- Terminal-User stehen in derselben `users`-Tabelle wie Menschen (keine
+  `kind`-Spalte). Trennung per Namenskonvention (`terminal-*@…`) oder einem
+  eigenen `Terminal`-Fachmodell mit `user_id`-Verweis — kosmetisch, kein
+  Blocker.
+- Geräte-Provisioning (langlebiges Terminal-Token sicher aufs Gerät bringen)
+  ist App-/Deployment-Sache.
+- PIN-Brute-Force-Schutz lässt sich über den vorhandenen
+  `RateLimiterBackend` ([R7](#p2--r7-verteilter-rate-limiter)) abdecken.
+
+**Was Asterion höchstens beisteuern müsste:** eine dokumentierte Stelle „so
+hängst du eine eigene Auth-Dependency neben `AdminContext` an eigene Router" —
+mehr nicht. Kein Device-Modell, kein PIN-Login im Core.
+
+**Status:** Muster entschieden + dokumentiert; Umsetzung erfolgt in der
+Zeiterfassungs-App, nicht im Framework. Streicht den zuvor vermuteten
+„separate Terminal-Auth"-Blocker.
+
+---
+
 ## Offene Follow-ups (kein 1.0-Blocker)
 
 ### mypy aufs Gesamtpaket
@@ -504,6 +590,79 @@ Signaturen; FastAPI-Quirks gezielt `# type: ignore` mit Begründung), dann
 `[tool.mypy] files` aufs Paket erweitern.
 
 **Status:** offen, **kein 1.0-Blocker**.
+
+### Idempotenz-Schlüssel für Schreib-APIs (generische HTTP-Schicht)
+
+**Was Idempotenz heißt:** Dieselbe Schreiboperation mehrfach ausführen hat
+denselben Effekt wie einmal — eine Wiederholung verdoppelt nichts. `GET`/
+`DELETE` sind von Natur aus idempotent; `POST` (etwas anlegen) ist es nicht und
+braucht dafür einen Schlüssel.
+
+**Einordnung:** Das ist **API-Grundlagen-Härtung**, kein Produktfeature — dieselbe
+Familie wie Request-IDs, Error-Envelope und Pagination, die der Core bereits
+besitzt. Daher gehört es nach Asterion und **nicht** in die App: es ist generische
+Plumbing, und der Core hält bereits Request-Lifecycle, Tenant-Kontext und
+DB-Session — genau das, was die Schicht braucht. (Abgrenzung zum gestrichenen
+EventBus: der war App-Plumbing ohne Framework-Bezug; Idempotenz hängt direkt am
+Request-/Session-Lifecycle des Frameworks.)
+
+**Problem:** Einzelne interne Operationen sind bereits idempotent geschrieben
+(Token-Revocation [auth/revocation.py](../asterion/auth/revocation.py),
+Tenant-Bootstrap [tenancy/bootstrap.py](../asterion/tenancy/bootstrap.py),
+`create-superadmin`). Aber es gibt **keinen generischen
+Idempotency-Key-Mechanismus** für die Schreib-APIs. Bei der Zeiterfassung über
+instabile Terminal-Netze ist die Wiederholung eines `POST /punch` (verlorene
+Antwort → Client retried) der Regelfall → ohne Schlüssel doppelte Buchungen.
+
+**Zwei geschichtete Ebenen (beide nötig, sie tun Unterschiedliches):**
+
+- **(A) Domain-Backstop, App-seitig, trivial:** ein `UNIQUE`-Constraint auf dem
+  fachlichen Schreibschlüssel (z. B. `TimeEvent.idempotency_key`). Erzwingt
+  Geschäfts-Eindeutigkeit und greift auch dann noch, wenn die HTTP-Schicht (B)
+  ihren Eintrag längst gepruned hat. **Steht der App heute ohne Core-Änderung
+  zur Verfügung** und deckt den Zeiterfassungs-Core allein bereits korrekt ab.
+- **(B) Generische HTTP-Schicht in Asterion (dieses Item):** fängt den Retry,
+  *bevor* der Handler erneut läuft, und replayt die gespeicherte Antwort — schützt
+  damit **alle** opt-in-Schreib-Endpunkte uniform, nicht nur die mit eigenem
+  Domain-Constraint. (A) bleibt als Defense-in-Depth bestehen.
+
+**Design (B):**
+
+```
+- Greift auf unsicheren Methoden (POST/PATCH/PUT) mit Header `Idempotency-Key`.
+- Tabelle idempotency_keys (TenantModel, pro Schema → Isolation + Tenant-Cleanup):
+    key (unique), request_fingerprint (Body+Pfad-Hash), state (in_progress|done),
+    response_status, response_body, response_headers, created_at, expires_at
+- Ablauf:
+    key fehlt         → Zeile "in_progress" INSERT (UNIQUE serialisiert
+                         parallele Retries), Handler laufen lassen, Antwort
+                         speichern, state="done"
+    key + done        → gespeicherte Antwort replayen; Fingerprint-Mismatch
+                         → 409 "key mit abweichendem Payload wiederverwendet"
+    key + in_progress → 409 "request in progress" (kein Doppel-Lauf)
+- TTL + Prune-Job (z. B. 24–48 h).
+- Opt-in pro Router via Marker-Dependency (Default aus → kein Verhalten ändert sich).
+```
+
+**Mechanik-Hinweis (ehrlicher Aufwand):** (B) muss die Response *erfassen* und
+replayen — das geht nur als Middleware oder als custom `APIRoute`-Klasse, nicht
+als reine Dependency (die kann die ausgehende Antwort nicht abgreifen). Das ist
+der eigentliche Implementierungsaufwand; der DB-Teil ist klein. Deshalb ist (B)
+ein eigenes, gescoptes Item und **kein Blocker** für den Zeiterfassungs-Core —
+der fährt zunächst auf (A).
+
+**Test (Abnahmekriterium):** (1) Zwei identische `POST` mit gleichem Key → genau
+eine Ausführung, zweite Antwort ist Replay. (2) Gleicher Key + abweichender Body
+→ 409. (3) Paralleler identischer Key (asyncio.gather) → eine Ausführung, kein
+Doppel-Insert (UNIQUE + in_progress). (4) Nach TTL/Prune verhält sich der Key wie
+neu. (5) Tenant A und Tenant B können denselben Key unabhängig benutzen
+(Schema-Isolation).
+
+**Risiko/Einordnung:** Niedrig als Framework-Lücke. **Kein 1.0-Blocker** — aber
+ein generischer Baustein mit klarem Wert für jede Terminal-/Geräte-App.
+
+**Status:** geplant — Design festgelegt (oben), Umsetzung nach Bedarf; der erste
+Konsument (Zeiterfassungs-Punch) läuft bis dahin auf Domain-Backstop (A).
 
 ---
 
