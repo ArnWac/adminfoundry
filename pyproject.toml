@@ -136,6 +136,25 @@ markers = [
 ]
 
 # ---------------------------------------------------------------------------
+# Coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["asterion"]
+# Router code runs inside Starlette's TestClient worker THREAD, and the
+# SQLAlchemy async DB calls hop into a GREENLET. Without both tracers,
+# coverage.py silently misses every ``await session.execute(...)`` path and
+# reports DB-heavy routers at ~half their true coverage. Tracing both gives
+# accurate numbers.
+concurrency = ["thread", "greenlet"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]
+
+# ---------------------------------------------------------------------------
 # Type checking
 # ---------------------------------------------------------------------------
 [tool.mypy]
