@@ -138,7 +138,7 @@ export const admin = {
 
   // Foreign-key picker options: {value, label} pairs for a FK column,
   // resolved server-side from the column's target table. Returns
-  //   { options: [{value, label}, ...], truncated: bool, registered: bool }
+  //   { options: [{value, label}, ...] }
   fieldOptions: (resource, field, { q = "", limit = 100 } = {}) => {
     const qs = new URLSearchParams({ limit });
     if (q) qs.set("q", q);
