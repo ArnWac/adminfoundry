@@ -30,6 +30,18 @@ async def _role_name_labels(session: Any, role_ids: set) -> dict[str, str]:
     return {str(rid): name for rid, name in rows}
 
 
+def _membership_email_stmt():
+    """Base cross-schema select: ``TenantMembership.id`` → member email.
+
+    The single join (membership → public ``User``) shared by the membership_id
+    label resolver and FK-options picker; each call site adds its own
+    ``WHERE`` / ordering so the join definition lives in one place.
+    """
+    return select(TenantMembership.id, User.email).join(
+        User, User.id == TenantMembership.user_id
+    )
+
+
 class TenantRoleAdmin(ModelAdmin):
     model = TenantRole
 
@@ -88,9 +100,7 @@ class TenantMembershipRoleAdmin(ModelAdmin):
         """
         if field != "membership_id":
             return None
-        stmt = select(TenantMembership.id, User.email).join(
-            User, User.id == TenantMembership.user_id
-        )
+        stmt = _membership_email_stmt()
         if q and q.strip():
             stmt = stmt.where(User.email.ilike(f"%{q.strip()}%"))
         stmt = stmt.order_by(User.email.asc()).limit(limit)
@@ -108,9 +118,7 @@ class TenantMembershipRoleAdmin(ModelAdmin):
         if membership_ids:
             rows = (
                 await session.execute(
-                    select(TenantMembership.id, User.email)
-                    .join(User, User.id == TenantMembership.user_id)
-                    .where(TenantMembership.id.in_(membership_ids))
+                    _membership_email_stmt().where(TenantMembership.id.in_(membership_ids))
                 )
             ).all()
             labels["membership_id"] = {str(mid): email for mid, email in rows}

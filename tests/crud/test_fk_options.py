@@ -144,7 +144,6 @@ def test_options_returns_value_label_pairs_sorted_by_label(app):
     resp = _client(app).get("/api/v1/admin/items/_options/category_id")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["registered"] is True
     labels = [o["label"] for o in body["options"]]
     assert labels == ["Alpha", "Beta", "Gamma"]  # ordered by label
     # value is the stringified primary key
@@ -191,7 +190,6 @@ def test_custom_resolver_supplies_options_without_db_fk(app):
     resp = _client(app).get("/api/v1/admin/items/_options/owner_ref")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["registered"] is True
     assert body["options"] == [
         {"value": "1", "label": "owner-one"},
         {"value": "2", "label": "owner-two"},

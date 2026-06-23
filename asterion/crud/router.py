@@ -223,16 +223,24 @@ async def _fk_options_impl(
     Authorization: the caller must be able to ``read`` the resource that owns
     the FK *and* ``list`` the target resource (the options come from it).
 
-    Returns an empty option list (never a 500) when the target isn't a
-    registered admin, or when it lives in a different schema scope than the
-    owning resource — the cross-schema case (e.g. a tenant row referencing a
-    public table) is resolved by a dedicated path, not the generic query here.
+    Returns ``{"options": []}`` (never a 500) when there's nothing to enumerate
+    generically — the target isn't a registered admin, or it lives in a
+    different schema scope (cross-schema, e.g. a tenant row referencing a public
+    table). An admin that needs a picker in those cases overrides
+    :meth:`~asterion.registry.ModelAdmin.resolve_fk_options` (checked first,
+    below); without an override the form keeps the raw id input.
     """
     from sqlalchemy import String, cast, select
 
     from asterion.contract.service import resolve_model_scope
-    from asterion.crud.query import get_model_column, primary_key_column
+    from asterion.crud.query import (
+        get_model_column,
+        normalize_limit_offset,
+        primary_key_column,
+    )
 
+    # Clamp the page size through the same validator the list endpoints use.
+    limit, _ = normalize_limit_offset(limit=limit, offset=0)
     admin_class = _get_admin_class(request, resource)
     _require_resource_permission(ctx, admin_class.model_name, "read")
 
@@ -252,12 +260,7 @@ async def _fk_options_impl(
         field, session=session, ctx=ctx, q=q, limit=limit
     )
     if custom is not None:
-        custom = list(custom)
-        return {
-            "options": custom[:limit],
-            "truncated": len(custom) > limit,
-            "registered": True,
-        }
+        return {"options": list(custom)[:limit]}
 
     fks = list(column.foreign_keys)
     if not fks:
@@ -270,13 +273,14 @@ async def _fk_options_impl(
     target_admin = request.app.state.asterion.registry.get(target_table)
     if target_admin is None:
         # Target table isn't managed by the admin — nothing to enumerate.
-        return {"options": [], "truncated": False, "registered": False}
+        return {"options": []}
 
-    # Cross-schema FK (tenant ↔ public): the generic query below would run
-    # against the wrong search_path. Defer to the dedicated path; until then
-    # the form falls back to a raw input.
+    # Cross-schema FK (tenant ↔ public): the generic query can't run across the
+    # request's search_path, and there's no generic fallback — an admin that
+    # wants a picker here overrides resolve_fk_options (checked above). Without
+    # one, the form keeps the raw id input.
     if resolve_model_scope(target_admin) != resolve_model_scope(admin_class):
-        return {"options": [], "truncated": False, "registered": True, "cross_scope": True}
+        return {"options": []}
 
     _require_resource_permission(ctx, target_admin.model_name, "list")
 
@@ -287,16 +291,14 @@ async def _fk_options_impl(
     stmt = select(pk_col, label_col)
     if q and q.strip():
         stmt = stmt.where(cast(label_col, String).ilike(f"%{q.strip()}%"))
-    # Fetch one extra row to detect truncation without a separate count.
-    stmt = stmt.order_by(label_col.asc()).limit(limit + 1)
+    stmt = stmt.order_by(label_col.asc()).limit(limit)
 
     rows = (await session.execute(stmt)).all()
-    truncated = len(rows) > limit
     options = [
         {"value": str(pk), "label": str(label) if label is not None else str(pk)}
-        for pk, label in rows[:limit]
+        for pk, label in rows
     ]
-    return {"options": options, "truncated": truncated, "registered": True}
+    return {"options": options}
 
 
 async def _delete_impl(

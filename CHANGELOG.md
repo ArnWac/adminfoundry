@@ -16,7 +16,18 @@ shape change bumps `CONTRACT_VERSION`.
 
 ## [Unreleased]
 
-## [0.1.24] - 2026-06-23
+## [0.1.25] - 2026-06-23
+
+### Changed
+- **FK-options endpoint response simplified** (cleanup of 0.1.23/0.1.24). The
+  `GET /{resource}/_options/{field}` response now returns just
+  `{"options": [{value, label}, ...]}` — the never-consumed `truncated`,
+  `registered`, and `cross_scope` fields (inconsistent across branches) were
+  dropped, along with the `limit+1` truncation probe. The endpoint's `limit` is
+  now clamped through the same `normalize_limit_offset` validator the list
+  endpoints use. Internal: the `TenantMembership → User` cross-schema join is
+  now a single shared helper (used by both the membership_id label resolver and
+  FK-options picker).
 
 ### Added
 - **FK dropdowns for cross-schema / join-label references.** New overridable
