@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from asterion.audit import TENANT_ACCESS, record_audit_in_session, request_audit_kwargs
 from asterion.auth.dependencies import require_superadmin
 from asterion.db.dependencies import get_async_session
 from asterion.models.tenant import Tenant
@@ -92,4 +93,41 @@ async def read_tenant(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Tenant not found.",
         )
+    return TenantOut.from_orm_tenant(tenant)
+
+
+@router.post("/tenants/{tenant_id}/access", response_model=TenantOut)
+async def access_tenant(
+    tenant_id: uuid.UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    current: User = Depends(require_superadmin),
+) -> TenantOut:
+    """Record a superadmin entering a tenant and return its slug.
+
+    Powers the "Open" button on the Tenant admin: the superadmin steps into a
+    tenant's context (scoped to it but keeping their own rights). The entry is
+    a privileged cross-tenant access, so it's written to the GLOBAL audit log
+    (``tenant_access``) for a governance trail — separate from the tenant's own
+    audit log, which records what the superadmin then *does* inside.
+    """
+    tenant = (
+        await session.execute(select(Tenant).where(Tenant.id == tenant_id))
+    ).scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant not found.",
+        )
+
+    await record_audit_in_session(
+        session,
+        action=TENANT_ACCESS,
+        actor=current,
+        tenant_id=tenant.id,
+        resource="tenants",
+        record_id=tenant.id,
+        changes={"slug": tenant.slug},
+        **request_audit_kwargs(request, status_code=200),
+    )
     return TenantOut.from_orm_tenant(tenant)

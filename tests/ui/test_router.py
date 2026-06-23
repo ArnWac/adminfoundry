@@ -227,6 +227,7 @@ def test_static_admin_layout():
         "format.js",
         "impersonation.js",
         "logic.js",
+        "tenant_access.js",
     ], files
     views_dir = static_dir / "views"
     assert views_dir.is_dir(), "views/ directory must exist"

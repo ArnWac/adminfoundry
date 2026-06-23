@@ -26,6 +26,7 @@ from asterion.auth.tokens import create_impersonation_token, get_token_jti
 from asterion.db.dependencies import get_async_session
 from asterion.models.impersonation_log import ImpersonationLog
 from asterion.models.tenant import Tenant
+from asterion.models.tenant_membership import TenantMembership
 from asterion.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,10 @@ class ImpersonateResponse(BaseModel):
     expires_in: int
     target_user_id: uuid.UUID
     tenant_id: uuid.UUID | None = None
+    #: Slug of the tenant the impersonated session should enter (so the UI can
+    #: drop straight into it). Set when a tenant was requested, or auto-resolved
+    #: when the target belongs to exactly one active tenant; otherwise None.
+    tenant_slug: str | None = None
 
 
 async def _load_target(session: AsyncSession, target_user_id: uuid.UUID) -> User:
@@ -84,6 +89,44 @@ async def _validate_tenant(session: AsyncSession, tenant_id: uuid.UUID) -> Tenan
     return tenant
 
 
+async def _resolve_target_tenant(
+    session: AsyncSession,
+    *,
+    target_id: uuid.UUID,
+    requested: uuid.UUID | None,
+) -> tuple[uuid.UUID | None, str | None]:
+    """Decide which tenant the impersonated session should enter.
+
+    An explicit ``requested`` tenant wins (validated active). Otherwise, when
+    the target belongs to **exactly one** active tenant, auto-enter it so the
+    impersonated UI lands in the right place instead of the empty global view.
+    Ambiguous (zero or several memberships) → no tenant (global).
+    """
+    if requested is not None:
+        tenant = await _validate_tenant(session, requested)
+        return tenant.id, tenant.slug
+
+    tenant_ids = set(
+        (
+            await session.execute(
+                select(TenantMembership.tenant_id).where(
+                    TenantMembership.user_id == target_id,
+                    TenantMembership.is_active.is_(True),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(tenant_ids) != 1:
+        return None, None
+    only = next(iter(tenant_ids))
+    tenant = (await session.execute(select(Tenant).where(Tenant.id == only))).scalar_one_or_none()
+    if tenant is None or not tenant.is_active:
+        return None, None
+    return tenant.id, tenant.slug
+
+
 @router.post("/impersonate", response_model=ImpersonateResponse)
 async def impersonate(
     payload: ImpersonateRequest,
@@ -99,8 +142,9 @@ async def impersonate(
 
     target = await _load_target(session, payload.target_user_id)
 
-    if payload.tenant_id is not None:
-        await _validate_tenant(session, payload.tenant_id)
+    effective_tenant_id, tenant_slug = await _resolve_target_tenant(
+        session, target_id=target.id, requested=payload.tenant_id
+    )
 
     config = request.app.state.asterion.config
     duration = payload.duration_minutes or DEFAULT_IMPERSONATION_MINUTES
@@ -108,7 +152,7 @@ async def impersonate(
     token = create_impersonation_token(
         target.id,
         impersonated_by_user_id=current_user.id,
-        tenant_id=payload.tenant_id,
+        tenant_id=effective_tenant_id,
         secret_key=config.secret_key,
         algorithm=config.jwt_algorithm,
         expires_minutes=duration,
@@ -133,7 +177,7 @@ async def impersonate(
         ImpersonationLog(
             superadmin_id=current_user.id,
             target_user_id=target.id,
-            tenant_id=payload.tenant_id,
+            tenant_id=effective_tenant_id,
             jti=jti,
         )
     )
@@ -144,12 +188,12 @@ async def impersonate(
             session,
             action=IMPERSONATION_START,
             actor=current_user,
-            tenant_id=payload.tenant_id,
+            tenant_id=effective_tenant_id,
             resource="users",
             record_id=target.id,
             changes={
                 "target_user_id": str(target.id),
-                "tenant_id": str(payload.tenant_id) if payload.tenant_id else None,
+                "tenant_id": str(effective_tenant_id) if effective_tenant_id else None,
                 "duration_minutes": duration,
                 "jti": jti,
             },
@@ -166,5 +210,6 @@ async def impersonate(
         access_token=token,
         expires_in=duration * 60,
         target_user_id=target.id,
-        tenant_id=payload.tenant_id,
+        tenant_id=effective_tenant_id,
+        tenant_slug=tenant_slug,
     )

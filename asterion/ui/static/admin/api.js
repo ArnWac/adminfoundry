@@ -174,6 +174,10 @@ export const root = {
       target_user_id: targetUserId,
       tenant_id: tenantId,
     }),
+  // Records a superadmin entering a tenant (global tenant_access audit) and
+  // returns the tenant (incl. slug) so the caller can set the active tenant.
+  enterTenant: (tenantId) =>
+    request("POST", `${cfg.rootPrefix}/tenants/${encodeURIComponent(tenantId)}/access`),
 };
 
 

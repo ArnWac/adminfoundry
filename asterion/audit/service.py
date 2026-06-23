@@ -51,6 +51,7 @@ CRUD_DELETE = "crud_delete"
 ADMIN_ACTION = "admin_action"
 IMPERSONATION_START = "impersonation_start"
 IMPERSONATION_STOP = "impersonation_stop"
+TENANT_ACCESS = "tenant_access"
 
 
 def request_audit_kwargs(

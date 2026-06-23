@@ -7,11 +7,14 @@
 // cfg.enableImpersonation and is superadmin-only (the route rejects
 // impersonation tokens, so you can't nest impersonation).
 
-import { auth, root, tokenStore } from "./api.js";
+import { auth, root, tenantStore, tokenStore } from "./api.js";
 import { el, showToast } from "./dom.js";
 
 const cfg = window.ASTERION || {};
 const ORIG_KEY = "asterion_access_orig";
+// Backup of the superadmin's active-tenant selection, restored on "Stop" so
+// they return to wherever they were before impersonating.
+const ORIG_TENANT_KEY = "asterion_tenant_orig";
 
 export function isImpersonating() {
   return !!localStorage.getItem(ORIG_KEY);
@@ -45,7 +48,12 @@ export async function renderImpersonateButton(resource, recordId) {
     try {
       const resp = await root.impersonate(recordId);
       localStorage.setItem(ORIG_KEY, tokenStore.get() || "");
+      localStorage.setItem(ORIG_TENANT_KEY, tenantStore.get() || "");
       tokenStore.set(resp.access_token);
+      // Enter the impersonated user's tenant (server resolved it when
+      // unambiguous) so we land in their context, not the empty global view.
+      if (resp.tenant_slug) tenantStore.set(resp.tenant_slug);
+      else tenantStore.clear();
       gotoDashboard();
     } catch (err) {
       btn.disabled = false;
@@ -78,7 +86,12 @@ export async function renderImpersonationBanner() {
   stop.addEventListener("click", () => {
     const orig = localStorage.getItem(ORIG_KEY);
     if (orig) tokenStore.set(orig);
+    // Restore the superadmin's prior tenant selection (empty = global).
+    const origTenant = localStorage.getItem(ORIG_TENANT_KEY);
+    if (origTenant) tenantStore.set(origTenant);
+    else tenantStore.clear();
     localStorage.removeItem(ORIG_KEY);
+    localStorage.removeItem(ORIG_TENANT_KEY);
     gotoDashboard();
   });
 
