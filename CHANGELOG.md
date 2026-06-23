@@ -16,6 +16,17 @@ shape change bumps `CONTRACT_VERSION`.
 
 ## [Unreleased]
 
+### Internal
+- **Coverage measurement corrected.** Added `[tool.coverage.run]
+  concurrency = ["thread", "greenlet"]` to pyproject. Router code runs in
+  Starlette's `TestClient` worker thread and SQLAlchemy's async DB calls hop
+  into a greenlet; without tracing both, coverage.py silently missed every
+  `await session.execute(...)` path and under-reported DB-heavy routers at
+  roughly half their true coverage (e.g. permission-matrix router measured 47%
+  but is actually 97%). True total coverage is ~92%, not the previously
+  reported 88%. `auth/revocation.py` raised to 100% with guard-branch tests
+  (empty `jti`, idempotent re-revocation, `exp`-claim parsing edge cases).
+
 ## [0.1.27] - 2026-06-23
 
 ### Changed
