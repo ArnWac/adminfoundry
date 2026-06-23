@@ -1,14 +1,33 @@
 from __future__ import annotations
 
+from typing import Any
+
+from sqlalchemy import select
+
 from asterion.admin.policy import ReadOnlyPolicy
 from asterion.models.audit_log import AuditLog
 from asterion.models.tenant_audit_log import TenantAuditLog
+from asterion.models.tenant_membership import TenantMembership
 from asterion.models.tenant_rbac import (
     TenantMembershipRole,
     TenantRole,
     TenantRolePermission,
 )
+from asterion.models.user import User
 from asterion.registry import ModelAdmin
+
+
+async def _role_name_labels(session: Any, role_ids: set) -> dict[str, str]:
+    """Batched ``role_id`` → role name map for the given ids (one query)."""
+    role_ids = {r for r in role_ids if r is not None}
+    if not role_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(TenantRole.id, TenantRole.name).where(TenantRole.id.in_(role_ids))
+        )
+    ).all()
+    return {str(rid): name for rid, name in rows}
 
 
 class TenantRoleAdmin(ModelAdmin):
@@ -36,6 +55,9 @@ class TenantRolePermissionAdmin(ModelAdmin):
     ordering = ["permission_key"]
     readonly_fields = ["id", "created_at", "updated_at"]
 
+    async def resolve_list_labels(self, objs, *, session, ctx=None):
+        return {"role_id": await _role_name_labels(session, {o.role_id for o in objs})}
+
 
 class TenantMembershipRoleAdmin(ModelAdmin):
     model = TenantMembershipRole
@@ -47,6 +69,25 @@ class TenantMembershipRoleAdmin(ModelAdmin):
     list_display = ["membership_id", "role_id", "created_at"]
     ordering = ["membership_id"]
     readonly_fields = ["id", "created_at", "updated_at"]
+
+    async def resolve_list_labels(self, objs, *, session, ctx=None):
+        labels: dict[str, dict[str, str]] = {
+            "role_id": await _role_name_labels(session, {o.role_id for o in objs}),
+        }
+        # membership_id points at a public TenantMembership (cross-schema, no
+        # FK); resolve it to the member's email via the request session, whose
+        # search_path includes public. One batched query.
+        membership_ids = {o.membership_id for o in objs if o.membership_id is not None}
+        if membership_ids:
+            rows = (
+                await session.execute(
+                    select(TenantMembership.id, User.email)
+                    .join(User, User.id == TenantMembership.user_id)
+                    .where(TenantMembership.id.in_(membership_ids))
+                )
+            ).all()
+            labels["membership_id"] = {str(mid): email for mid, email in rows}
+        return labels
 
 
 class AuditLogAdmin(ModelAdmin):
