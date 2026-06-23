@@ -1,7 +1,7 @@
 """password_reset_tokens
 
 Revision ID: 0003_password_reset_tokens
-Revises: 0002_saved_filters_revoked_tokens
+Revises: 0002_filters_revoked_tokens
 Create Date: 2026-05-29
 
 Adds the password-reset token store (Roadmap 3.3). Only the SHA-256
@@ -17,7 +17,7 @@ from asterion.models.base import GUID
 
 # Alembic identifiers
 revision = "0003_password_reset_tokens"
-down_revision = "0002_saved_filters_revoked_tokens"
+down_revision = "0002_filters_revoked_tokens"
 branch_labels = None
 depends_on = None
 

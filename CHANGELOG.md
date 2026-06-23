@@ -16,6 +16,32 @@ shape change bumps `CONTRACT_VERSION`.
 
 ## [Unreleased]
 
+## [0.1.30] - 2026-06-24
+
+### Fixed
+- **`asterion db upgrade-public` failed against a fresh PostgreSQL.** The shared
+  revision id `0002_saved_filters_revoked_tokens` was 33 characters; Alembic's
+  default `alembic_version.version_num` column is `VARCHAR(32)`, which Postgres
+  enforces. Stamping that revision overflowed with
+  `StringDataRightTruncationError`, rolling back the entire `upgrade-public`
+  transaction — so `public.tenants` never persisted and the follow-on
+  `tenant create` / `db upgrade-tenant <slug>` had nothing to build on. SQLite
+  ignores `VARCHAR` lengths, which is why the failure only surfaced on Postgres.
+  The revision id is renamed to `0002_filters_revoked_tokens` (27 chars) and the
+  successor's `down_revision` updated to match; the version file is renamed in
+  step. Since the old id could never be stamped on Postgres, no Postgres database
+  can carry it — no data migration is needed. A SQLite database created with the
+  old id can be corrected with
+  `UPDATE alembic_version SET version_num='0002_filters_revoked_tokens'`.
+
+### Internal
+- **Regression guards for the migration-stamp overflow.** A unit test asserts
+  every bundled shared/tenant revision id fits Alembic's
+  `alembic_version VARCHAR(32)` column, and a new Postgres e2e test runs
+  `db upgrade-public` from base to head against a freshly-created throwaway
+  database, then exercises `tenant create` + `db upgrade-tenant` — the
+  end-to-end provisioning path that previously had no real-Postgres coverage.
+
 ## [0.1.29] - 2026-06-24
 
 ### Removed
