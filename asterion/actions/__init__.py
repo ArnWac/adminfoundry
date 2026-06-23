@@ -92,22 +92,14 @@ class AdminAction:
           legacy ``user`` argument and giving access to tenant,
           permissions, request, etc.
 
-        The default implementation forwards to ``execute`` for
-        backward compatibility — subclasses that override this method
-        do not need to call ``super().run``.
+        The router only dispatches here when a subclass overrides ``run``;
+        actions that implement only the legacy ``execute`` are dispatched
+        there directly. The default therefore raises rather than silently
+        no-opping, so an action defined with neither method fails loudly.
         """
-        # Pull the session out of ctx.request for backward compat —
-        # legacy execute() expects (records, session, user). Custom
-        # run() implementations don't need this branch.
-        from asterion.db.dependencies import get_async_session
-
-        # ctx-less call path: action is being invoked outside an HTTP
-        # request and the caller provided neither a session nor a
-        # legacy user. Raise so the bug is visible rather than
-        # silently returning an empty result.
         raise NotImplementedError(
-            f"Action {self.name!r} does not implement run() — the default "
-            "forwards to execute() but the router should have dispatched there directly."
+            f"Action {self.name!r} does not implement run() — the router should "
+            "have dispatched to execute() instead."
         )
 
     def to_dict(self) -> dict[str, Any]:

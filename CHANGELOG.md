@@ -16,6 +16,15 @@ shape change bumps `CONTRACT_VERSION`.
 
 ## [Unreleased]
 
+## [0.1.28] - 2026-06-24
+
+### Changed
+- **Internal: dead-code cleanup in `actions/__init__.py`.** Removed an unused
+  `get_async_session` import and the misleading "forwards to execute()"
+  comments from `AdminAction.run`'s default body (it raises
+  `NotImplementedError` — the router dispatches `execute`-only actions
+  directly). ruff's `**/__init__.py` F401 exemption had hidden the dead import.
+
 ### Internal
 - **Coverage measurement corrected.** Added `[tool.coverage.run]
   concurrency = ["thread", "greenlet"]` to pyproject. Router code runs in
@@ -26,6 +35,9 @@ shape change bumps `CONTRACT_VERSION`.
   but is actually 97%). True total coverage is ~92%, not the previously
   reported 88%. `auth/revocation.py` raised to 100% with guard-branch tests
   (empty `jti`, idempotent re-revocation, `exp`-claim parsing edge cases).
+- **`vulture` + `radon` added to the `dev` extra** as local static-analysis
+  aids (dead-code detection + complexity/maintainability reporting). Not CI
+  gates — for manual cleanup passes.
 
 ## [0.1.27] - 2026-06-23
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asterion-admin"
-version = "0.1.27"
+version = "0.1.28"
 description = "FastAPI admin framework with built-in UI, JWT auth, RBAC, and multi-tenancy"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -95,6 +95,11 @@ dev = [
     "ruff>=0.15,<0.16",
     "mypy>=1.11",
     "build>=1.2.0",
+    # Static analysis aids for local cleanup passes (not CI gates):
+    # vulture finds dead code, radon reports cyclomatic complexity /
+    # maintainability. See docs/review-hardening-roadmap.md.
+    "vulture>=2.16",
+    "radon>=6.0",
 ]
 
 # Parked extras (Redis-backed rate limiter, S3 storage, webhooks, yaml
