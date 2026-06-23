@@ -195,6 +195,36 @@ class ModelAdmin:
             cls.field_dependencies = {}
 
     # ------------------------------------------------------------------
+    # List-view reference labels
+    # ------------------------------------------------------------------
+
+    async def resolve_list_labels(
+        self,
+        objs: list[Any],
+        *,
+        session: Any,
+        ctx: AdminContext | None = None,
+    ) -> dict[str, dict[str, str]]:
+        """Human-readable labels for reference (id) columns in the list view.
+
+        Return ``{column_name: {raw_value_str: label}}``. The list endpoint
+        attaches a ``"<column>__label"`` key to each serialized row so the UI
+        renders the label instead of the raw id (the raw value stays available
+        under the original key).
+
+        Resolve in **batch** — one query per related table for the whole page
+        (``WHERE id IN (...)``), never one query per row — so a list view with
+        reference columns stays O(1) queries, not O(n). ``objs`` is the page of
+        ORM rows; ``session`` is the same request-scoped (tenant-aware) session
+        the rows were loaded from, so cross-schema lookups (e.g. a tenant row's
+        ``membership_id`` → a public ``users.email``) work through its
+        ``search_path``.
+
+        Default: no labels.
+        """
+        return {}
+
+    # ------------------------------------------------------------------
     # Lifecycle hooks (B1)
     # ------------------------------------------------------------------
     #

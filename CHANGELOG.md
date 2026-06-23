@@ -16,6 +16,21 @@ shape change bumps `CONTRACT_VERSION`.
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-06-23
+
+### Added
+- **Reference labels in list views.** New `ModelAdmin.resolve_list_labels(objs,
+  *, session, ctx)` hook returns `{column: {raw_id: label}}`; `list_records`
+  attaches a `"<column>__label"` to each row and the UI renders the name
+  (raw id kept as a hover title). Resolution is **batched** — one query per
+  related table for the whole page (`WHERE id IN (...)`), never one per row.
+  The builtin RBAC admins use it so the tenant lists stop showing bare UUIDs:
+  `TenantMembershipRole` now shows the role name + the member's email
+  (the latter a cross-schema lookup into the public `users` table via the
+  request session's `search_path`), and `TenantRolePermission` shows the role
+  name. Default hook returns `{}`, so admins that don't override it — and the
+  rest of the list path — are unchanged.
+
 ## [0.1.14] - 2026-06-23
 
 ### Added

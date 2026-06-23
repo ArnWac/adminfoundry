@@ -374,6 +374,14 @@ export async function mountList(root, resource) {
           );
           continue;
         }
+        // Reference label: when the server resolved a name for an id column
+        // (e.g. role_id → role name, membership_id → user email), show the
+        // name with the raw id kept as a hover title for traceability.
+        const refLabel = item[`${colName}__label`];
+        if (refLabel != null) {
+          cells.push(el("td", { title: item[colName] != null ? String(item[colName]) : "" }, String(refLabel)));
+          continue;
+        }
         const formatted = formatValue(item[colName], fieldsByName[colName]);
         const td = el("td", { class: formatted.muted ? "muted" : "" }, formatted.text);
         if (formatted.mono) td.style.fontFamily = "ui-monospace, SFMono-Regular, monospace";

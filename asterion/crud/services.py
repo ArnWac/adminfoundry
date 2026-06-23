@@ -186,6 +186,17 @@ async def list_records(
     else:
         items = serialize_records(records, admin_class)
 
+    # Reference labels (batched, one query per related table for the page).
+    # Each resolved column gets a parallel ``<col>__label`` on the row so the
+    # UI can show a name instead of a raw id; the raw value stays in place.
+    labels = await admin_class.resolve_list_labels(list(records), session=session, ctx=ctx)
+    if labels:
+        for item in items:
+            for col, mapping in labels.items():
+                raw = item.get(col)
+                if raw is not None and str(raw) in mapping:
+                    item[f"{col}__label"] = mapping[str(raw)]
+
     return PageResult(
         items=items,
         total=total,
