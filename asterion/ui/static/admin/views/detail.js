@@ -6,6 +6,7 @@ import { looksLikeAuditDiff, renderDiffTable } from "../diff.js";
 import { el, mount, setBreadcrumb } from "../dom.js";
 import { formatValue } from "../format.js";
 import { renderImpersonateButton } from "../impersonation.js";
+import { openTenant } from "../tenant_access.js";
 
 const cfg = window.ASTERION || {};
 
@@ -83,6 +84,10 @@ export async function mountDetail(root, resource, recordId) {
           },
           "Edit permissions"
         )
+      : null,
+    // A tenant can be "entered" as superadmin (scoped context switch).
+    resource === "tenants"
+      ? el("button", { type: "button", class: "btn", onClick: () => openTenant(recordId) }, "Open")
       : null,
   ]);
 

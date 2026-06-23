@@ -5,6 +5,7 @@ import { APIError, admin } from "../api.js";
 import { getFullContract, getResourceContract } from "../contract.js";
 import { clear, el, mount, setBreadcrumb, showToast } from "../dom.js";
 import { formatValue } from "../format.js";
+import { openTenant } from "../tenant_access.js";
 import { composeDateHierarchy, editIsDirty, nextSortState } from "../logic.js";
 import { openImportModal } from "./import_modal.js";
 
@@ -394,6 +395,14 @@ export async function mountList(root, resource) {
             { class: "btn btn-sm", href: `${cfg.uiPath}/${resource}/${encodeURIComponent(id)}` },
             "View"
           ),
+          // Superadmin "enter tenant" shortcut straight from the row.
+          resource === "tenants"
+            ? el(
+                "button",
+                { type: "button", class: "btn btn-sm", onClick: () => openTenant(id) },
+                "Open"
+              )
+            : null,
         ])
       );
       tableBody.appendChild(el("tr", {}, cells));

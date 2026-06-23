@@ -16,6 +16,23 @@ shape change bumps `CONTRACT_VERSION`.
 
 ## [Unreleased]
 
+## [0.1.18] - 2026-06-23
+
+### Added
+- **Superadmin "Open tenant" + access audit.** Tenant list rows and the tenant
+  detail page get an **Open** button: the superadmin steps into that tenant's
+  context (scoped, keeping their own rights — not impersonation). Backed by a
+  new `POST {root}/tenants/{id}/access` endpoint that writes a **global**
+  `tenant_access` audit event (who entered which tenant, when) for a governance
+  trail — separate from the tenant's own audit log, which records what the
+  superadmin then does inside. New `TENANT_ACCESS` audit action.
+- **Impersonation enters the target's tenant.** When you impersonate a user the
+  session now lands in that user's tenant instead of the empty global view: an
+  explicit `tenant_id` wins, otherwise it auto-resolves when the target belongs
+  to exactly one active tenant (ambiguous → global). The response carries
+  `tenant_slug`; the UI sets the active tenant and redirects there, and "Stop"
+  restores the superadmin's prior token **and** tenant selection.
+
 ## [0.1.17] - 2026-06-23
 
 ### Added

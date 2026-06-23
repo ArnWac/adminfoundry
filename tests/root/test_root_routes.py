@@ -304,3 +304,107 @@ def test_root_routes_never_register_global_models_as_tenant_admins(app_state):
     # 404 (not registered as tenant admin) — root models are NOT exposed
     # via the tenant-local CRUD router.
     assert resp.status_code in (401, 403, 404)
+
+
+# --- POST /tenants/{id}/access (superadmin tenant entry) ---
+
+
+def _first_tenant(app, state):
+    listing = (
+        _client(app).get("/api/v1/root/tenants", headers=_bearer(_superadmin_token(state))).json()
+    )
+    return listing["items"][0]
+
+
+def test_access_tenant_records_global_audit(app_state):
+    app, state = app_state
+    tenant = _first_tenant(app, state)
+    resp = _client(app).post(
+        f"/api/v1/root/tenants/{tenant['id']}/access",
+        headers=_bearer(_superadmin_token(state)),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["slug"] == tenant["slug"]
+
+    runtime = app.state.asterion
+
+    async def _rows():
+        from sqlalchemy import select
+
+        from asterion.models.audit_log import AuditLog
+
+        factory = async_sessionmaker(runtime.db.engine, expire_on_commit=False)
+        async with factory() as session:
+            return (
+                (await session.execute(select(AuditLog).where(AuditLog.action == "tenant_access")))
+                .scalars()
+                .all()
+            )
+
+    rows = asyncio.run(_rows())
+    assert len(rows) == 1
+    assert str(rows[0].tenant_id) == tenant["id"]
+    assert rows[0].actor_label == "root@example.com"
+
+
+def test_access_tenant_requires_superadmin(app_state):
+    app, state = app_state
+    tenant = _first_tenant(app, state)
+    resp = _client(app).post(
+        f"/api/v1/root/tenants/{tenant['id']}/access",
+        headers=_bearer(_user_token(state)),
+    )
+    assert resp.status_code == 403
+
+
+def test_access_unknown_tenant_404(app_state):
+    app, state = app_state
+    resp = _client(app).post(
+        f"/api/v1/root/tenants/{uuid.uuid4()}/access",
+        headers=_bearer(_superadmin_token(state)),
+    )
+    assert resp.status_code == 404
+
+
+# --- impersonation auto-enters the target's single tenant ---
+
+
+def test_impersonate_auto_enters_single_tenant(app_state):
+    app, state = app_state
+    tenant = next(t for t in _first_tenant_list(app, state) if t["slug"] == "acme")
+
+    runtime = app.state.asterion
+
+    async def _seed_membership():
+        from asterion.models.tenant_membership import TenantMembership
+
+        factory = async_sessionmaker(runtime.db.engine, expire_on_commit=False)
+        async with factory() as session:
+            async with session.begin():
+                session.add(
+                    TenantMembership(
+                        user_id=state["user"].id,
+                        tenant_id=uuid.UUID(tenant["id"]),
+                        is_active=True,
+                    )
+                )
+
+    asyncio.run(_seed_membership())
+
+    resp = _client(app).post(
+        "/api/v1/root/impersonate",
+        headers=_bearer(_superadmin_token(state)),
+        json={"target_user_id": str(state["user"].id)},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["tenant_slug"] == "acme"
+    assert body["tenant_id"] == tenant["id"]
+
+
+def _first_tenant_list(app, state):
+    return (
+        _client(app)
+        .get("/api/v1/root/tenants", headers=_bearer(_superadmin_token(state)))
+        .json()["items"]
+    )
