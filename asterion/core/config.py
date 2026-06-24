@@ -49,6 +49,19 @@ def _env_int(name: str, default: int) -> int:
         raise ValueError(f"Invalid integer value for {name}: {value!r}.") from exc
 
 
+def _env_optional_int(name: str) -> int | None:
+    """Parse an optional int env var. Unset (or empty) yields ``None``."""
+    value = os.getenv(name)
+
+    if value is None or value.strip() == "":
+        return None
+
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError(f"Invalid integer value for {name}: {value!r}.") from exc
+
+
 def _env_required(name: str) -> str:
     value = os.getenv(name)
 
@@ -183,6 +196,18 @@ class CoreAdminConfig:
     db_pool_size: int = 10
     db_max_overflow: int = 20
     db_pool_pre_ping: bool = True
+
+    #: asyncpg server-side prepared-statement cache size for the PostgreSQL engine.
+    #: Schema-per-tenant switches ``search_path`` on pooled connections, but asyncpg
+    #: keys its prepared-statement cache by SQL *text* (not by ``search_path``): a plan
+    #: prepared while connected to tenant A's schema is reused when the same pooled
+    #: connection later serves tenant B, whose tables have different OIDs — raising
+    #: ``InvalidCachedStatementError``. Disabling the cache (``0``) is the documented
+    #: fix for ``search_path`` / PgBouncer setups. ``None`` (default) means *auto*: ``0``
+    #: when :attr:`enable_multi_tenant` is on (schema-per-tenant is then the norm),
+    #: otherwise asyncpg's own default is kept. Set an explicit int to override either
+    #: way. Ignored for SQLite. See :meth:`resolved_statement_cache_size`.
+    db_statement_cache_size: int | None = None
 
     log_level: str = "INFO"
     log_json: bool = False
@@ -343,6 +368,7 @@ class CoreAdminConfig:
             db_pool_size=_env_int("ASTERION_DB_POOL_SIZE", 10),
             db_max_overflow=_env_int("ASTERION_DB_MAX_OVERFLOW", 20),
             db_pool_pre_ping=_env_bool("ASTERION_DB_POOL_PRE_PING", True),
+            db_statement_cache_size=_env_optional_int("ASTERION_DB_STATEMENT_CACHE_SIZE"),
             log_level=_env_optional("ASTERION_LOG_LEVEL", "INFO").upper(),
             log_json=_env_bool("ASTERION_LOG_JSON", False),
             cors_origins=_env_tuple("ASTERION_CORS_ORIGINS", ()),
@@ -449,12 +475,27 @@ class CoreAdminConfig:
                 "default_date_pattern must not be empty when default_date_format='custom'"
             )
 
+    def resolved_statement_cache_size(self) -> int | None:
+        """The asyncpg statement-cache size to apply to the Postgres engine.
+
+        ``None`` means "leave asyncpg's default in place" (don't pass
+        ``connect_args``). An explicit :attr:`db_statement_cache_size` always
+        wins; when unset, multi-tenant deployments disable the cache (``0``) to
+        avoid ``InvalidCachedStatementError`` across ``search_path`` switches,
+        while single-tenant keeps the default for the prepared-statement speed-up.
+        """
+        if self.db_statement_cache_size is not None:
+            return self.db_statement_cache_size
+        return 0 if self.enable_multi_tenant else None
+
     def _validate_operational(self) -> None:
         """PR-4: operational baseline (pools, logging, CORS, enums)."""
         if self.db_pool_size <= 0:
             raise ValueError("db_pool_size must be > 0")
         if self.db_max_overflow < 0:
             raise ValueError("db_max_overflow must be >= 0")
+        if self.db_statement_cache_size is not None and self.db_statement_cache_size < 0:
+            raise ValueError("db_statement_cache_size must be >= 0 when set")
 
         normalized_level = self.log_level.upper()
         if normalized_level not in _VALID_LOG_LEVELS:
@@ -533,6 +574,7 @@ class CoreAdminConfig:
             "db_pool_size": self.db_pool_size,
             "db_max_overflow": self.db_max_overflow,
             "db_pool_pre_ping": self.db_pool_pre_ping,
+            "db_statement_cache_size": self.db_statement_cache_size,
             "log_level": self.log_level,
             "log_json": self.log_json,
             "cors_origins": list(self.cors_origins),

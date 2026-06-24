@@ -111,6 +111,7 @@ def create_admin(
             pool_size=config.db_pool_size,
             max_overflow=config.db_max_overflow,
             pool_pre_ping=config.db_pool_pre_ping,
+            statement_cache_size=config.resolved_statement_cache_size(),
         ),
         providers=providers,
         password_reset_notifier=password_reset_notifier,

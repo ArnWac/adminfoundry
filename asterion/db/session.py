@@ -19,6 +19,14 @@ class DatabaseManager:
     (defaults match :class:`CoreAdminConfig`). SQLite gets WAL +
     busy_timeout pragmas so independent writer sessions wait briefly
     instead of immediately erroring with "database is locked".
+
+    ``statement_cache_size`` controls asyncpg's server-side prepared-statement
+    cache. Schema-per-tenant switches ``search_path`` on pooled connections, but
+    asyncpg keys its cache by SQL text rather than ``search_path`` — so a plan
+    prepared for one tenant's tables is reused for another on the same pooled
+    connection and raises ``InvalidCachedStatementError``. Pass ``0`` to disable
+    the cache (the documented fix for ``search_path``/PgBouncer setups); ``None``
+    leaves asyncpg's default untouched. Postgres only; ignored for SQLite.
     """
 
     def __init__(
@@ -29,6 +37,7 @@ class DatabaseManager:
         pool_size: int = 10,
         max_overflow: int = 20,
         pool_pre_ping: bool = True,
+        statement_cache_size: int | None = None,
     ) -> None:
         engine_kwargs: dict = {
             "echo": echo,
@@ -44,6 +53,13 @@ class DatabaseManager:
                     "max_overflow": max_overflow,
                 }
             )
+            if statement_cache_size is not None:
+                # asyncpg-level knob (authoritative): no server-side prepared
+                # statements when 0, so a pooled connection can switch tenant
+                # search_path without serving a stale cached plan.
+                engine_kwargs["connect_args"] = {
+                    "statement_cache_size": statement_cache_size
+                }
         elif is_sqlite:
             # GlobalModel.metadata declares schema="public" for Postgres.
             # SQLite has no schemas — transparently drop the qualifier.

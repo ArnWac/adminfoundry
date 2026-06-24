@@ -76,7 +76,11 @@ def _load_config() -> CoreAdminConfig:
 
 
 def _make_db(config: CoreAdminConfig) -> DatabaseManager:
-    return DatabaseManager(config.database_url, echo=config.debug)
+    return DatabaseManager(
+        config.database_url,
+        echo=config.debug,
+        statement_cache_size=config.resolved_statement_cache_size(),
+    )
 
 
 async def _find_user_by_email(session: AsyncSession, email: str) -> User | None:
