@@ -1,6 +1,6 @@
 """saved_filters + revoked_tokens
 
-Revision ID: 0002_saved_filters_revoked_tokens
+Revision ID: 0002_filters_revoked_tokens
 Revises: 0001_initial_public
 Create Date: 2026-05-29
 
@@ -21,7 +21,7 @@ from alembic import op
 from asterion.models.base import GUID
 
 # Alembic identifiers
-revision = "0002_saved_filters_revoked_tokens"
+revision = "0002_filters_revoked_tokens"
 down_revision = "0001_initial_public"
 branch_labels = None
 depends_on = None

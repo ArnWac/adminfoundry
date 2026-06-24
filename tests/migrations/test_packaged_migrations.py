@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from importlib.resources import files
 
+import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect
 from typer.testing import CliRunner
 
@@ -18,6 +21,32 @@ from asterion.cli import app
 from asterion.db.alembic_support import bundled_migrations_path, tenant_alembic_config
 
 runner = CliRunner()
+
+# Alembic's default version table is ``alembic_version.version_num VARCHAR(32)``
+# (hard-coded in alembic.runtime.migration). Postgres enforces the width, so a
+# revision id longer than this overflows on the ``UPDATE alembic_version`` stamp
+# and rolls the whole upgrade back. SQLite ignores VARCHAR lengths, which is why
+# this only ever bit on real Postgres.
+ALEMBIC_VERSION_NUM_MAX = 32
+
+
+# --- revision-id length guard ---
+
+
+@pytest.mark.parametrize("env", ["shared", "tenant"])
+def test_revision_ids_fit_alembic_version_column(env):
+    cfg = Config()
+    cfg.set_main_option("script_location", str(bundled_migrations_path(env)))
+    script = ScriptDirectory.from_config(cfg)
+    too_long = {
+        rev.revision: len(rev.revision)
+        for rev in script.walk_revisions()
+        if len(rev.revision) > ALEMBIC_VERSION_NUM_MAX
+    }
+    assert not too_long, (
+        f"{env} revision ids exceed alembic_version VARCHAR({ALEMBIC_VERSION_NUM_MAX}) "
+        f"and will overflow the stamp on Postgres: {too_long}"
+    )
 
 
 # --- packaging ---
