@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from collections.abc import Mapping
 from typing import Any
 
 from fastapi import HTTPException, status
+from sqlalchemy import Date, DateTime, Time
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Mapper
 
@@ -107,4 +109,79 @@ def validate_uuid_fields(cleaned: Mapping[str, Any], model: type) -> None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"message": "Invalid UUID value for field(s).", "fields": sorted(bad)},
+        )
+
+
+def _parse_datetime(text: str) -> dt.datetime | None:
+    # ``datetime.fromisoformat`` parses the offset form natively on 3.11+; the
+    # trailing-``Z`` military form is the one shape it still rejects, and it is
+    # exactly what ``new Date(...).toISOString()`` (the admin UI) emits.
+    candidate = f"{text[:-1]}+00:00" if text.endswith(("Z", "z")) else text
+    try:
+        return dt.datetime.fromisoformat(candidate)
+    except ValueError:
+        return None
+
+
+def _parse_date(text: str) -> dt.date | None:
+    try:
+        return dt.date.fromisoformat(text)
+    except ValueError:
+        # Tolerate a full datetime string landing in a date column (e.g. a
+        # datetime-local input wired to a ``sa.Date`` field) — keep the date.
+        parsed = _parse_datetime(text)
+        return parsed.date() if parsed is not None else None
+
+
+def _parse_time(text: str) -> dt.time | None:
+    try:
+        return dt.time.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def coerce_temporal_fields(cleaned: dict[str, Any], model: type) -> None:
+    """Cast ISO-8601 strings to ``date``/``datetime``/``time`` in place.
+
+    The admin UI legitimately sends date/datetime/time inputs as strings. Like
+    :func:`validate_uuid_fields`, the write path validates field *names* but not
+    column *types*, so an un-cast string would reach the driver and surface as a
+    500 (PostgreSQL won't coerce ``character varying`` into ``date`` /
+    ``timestamp`` / ``time`` — ``DatatypeMismatchError``). This parses the common
+    case early; an unparseable string becomes a 422 field error, never a 500.
+
+    Empty/whitespace-only strings (a cleared form field) become ``None``;
+    non-string values (already-parsed objects from non-HTTP callers) pass
+    through untouched.
+    """
+    mapper: Mapper[Any] = sa_inspect(model)
+    columns = mapper.columns
+    bad: list[str] = []
+    for name, value in cleaned.items():
+        if not isinstance(value, str) or name not in columns:
+            continue
+        col_type = columns[name].type
+        # ``DateTime`` is not a subclass of ``Date``, but check it first anyway
+        # so the intent is unambiguous.
+        if isinstance(col_type, DateTime):
+            parser: Any = _parse_datetime
+        elif isinstance(col_type, Date):
+            parser = _parse_date
+        elif isinstance(col_type, Time):
+            parser = _parse_time
+        else:
+            continue
+        text = value.strip()
+        if not text:
+            cleaned[name] = None
+            continue
+        parsed = parser(text)
+        if parsed is None:
+            bad.append(name)
+        else:
+            cleaned[name] = parsed
+    if bad:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"message": "Invalid date/time value for field(s).", "fields": sorted(bad)},
         )

@@ -16,6 +16,18 @@ shape change bumps `CONTRACT_VERSION`.
 
 ## [Unreleased]
 
+## [0.1.38] - 2026-06-26
+
+### Fixed
+- **Generic CRUD write path no longer 500s on Date/DateTime/Time columns.** ISO-8601
+  strings sent for temporal columns (e.g. `{"employment_start": "2024-02-01"}` — what
+  the admin UI legitimately emits) are now cast to `date`/`datetime`/`time` before they
+  reach the driver, instead of surfacing as a 500 (`DatatypeMismatchError` on
+  PostgreSQL). Unparseable values become a **422** field error, and an empty/cleared
+  string becomes `NULL` — mirroring the existing `validate_uuid_fields` behaviour for
+  GUID columns. New `coerce_temporal_fields` in `crud/payload.py`, applied in
+  `create_record`/`update_record`.
+
 ## [0.1.37] - 2026-06-25
 
 More admin-UI polish + a tenant-migration ownership fix, surfaced while building
