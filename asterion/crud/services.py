@@ -7,7 +7,11 @@ from fastapi import HTTPException, status
 from sqlalchemy import Result, Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from asterion.crud.payload import clean_write_payload, validate_uuid_fields
+from asterion.crud.payload import (
+    clean_write_payload,
+    coerce_temporal_fields,
+    validate_uuid_fields,
+)
 from asterion.crud.query import (
     apply_date_hierarchy,
     apply_filters,
@@ -301,6 +305,7 @@ async def create_record(
         partial=False,
     )
     validate_uuid_fields(cleaned, model)
+    coerce_temporal_fields(cleaned, model)
 
     if ctx is not None:
         await admin_class.validate_create(cleaned, ctx)
@@ -363,6 +368,7 @@ async def update_record(
     if ctx is None:
         cleaned = clean_write_payload(parent_payload, schema, partial=True)
         validate_uuid_fields(cleaned, admin_class.model)
+        coerce_temporal_fields(cleaned, admin_class.model)
         record = await get_record_or_404(session, admin_class, record_id)
         for field_name, value in cleaned.items():
             setattr(record, field_name, value)
@@ -390,6 +396,7 @@ async def update_record(
         partial=True,
     )
     validate_uuid_fields(cleaned, admin_class.model)
+    coerce_temporal_fields(cleaned, admin_class.model)
 
     await admin_class.validate_update(record, cleaned, ctx)
     cleaned = await admin_class.before_update(record, cleaned, ctx)
