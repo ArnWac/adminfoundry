@@ -13,8 +13,8 @@ Usage::
     # → "Passwort zurücksetzen"
 
     # Interpolation:
-    print(t("email_welcome_subject", lang="de", title="SimpleTimes"))
-    # → "Willkommen bei SimpleTimes"
+    print(t("email_welcome_subject", lang="de", title="Acme"))
+    # → "Willkommen bei Acme"
 
     # Add custom strings for your app:
     add_catalog("de", {"my_key": "Mein Text"})
