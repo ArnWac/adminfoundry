@@ -95,6 +95,7 @@ can_update_object / can_delete_object / field_permission`. `FieldPermission`:
 | Permission keys | `admin.<resource>.<action>`, trailing-`*` only. | Middle wildcard (`admin.*.list`) rejected on parse. |
 | Single-tenant scope | No tenant → superadmin required by default. | `single_tenant_require_superadmin=False` to open it. |
 | Rate limiting | Login + password-reset (per email) + 2FA-login (per user). | In-memory default per-process; wire Redis backend for multi-worker. |
+| Per-tenant rate limit (G19) | Sliding-window budget per tenant; `429` over budget. | Off by default; keyed by tenant only; no-tenant requests unlimited; Redis backend for multi-worker. |
 | Password policy (G21) | Pluggable `PasswordPolicy`; length + opt-in HIBP breach check. | HIBP off by default (external call, k-anonymity); fails open on outage. |
 | Input validation | `validate_*` on every external identifier. | Pagination bounded `[1,500]`. |
 | Field protection | Per-admin + global `ProtectedFieldRegistry`. | One `strictest` rule; policy only tightens. |

@@ -69,7 +69,7 @@ bereits abgedeckt (R1–R17); die hier gelisteten Punkte schließen die
 | **Sollte** | G11 | Governance-Doku (GOVERNANCE/THREAT_MODEL/ADRs/Berechtigungsmatrix/Shared-Responsibility) | mittel | ✅ erledigt |
 | **Sollte** | G12 | Security-CI-Härtung (Dependency-/Secret-Scan, SBOM, PII-freie Testdaten) | mittel | ✅ erledigt |
 | **Sollte** | G13 | IDOR-/Tenant-Leak-Testsuite ausbauen | mittel | ✅ erledigt |
-| **Sollte** | G19 | Per-Tenant Rate-Limiting / Quotas (Noisy-Neighbor) | mittel | geplant |
+| **Sollte** | G19 | Per-Tenant Rate-Limiting / Quotas (Noisy-Neighbor) | mittel | ✅ erledigt |
 | **Sollte** | G20 | Observability: OpenTelemetry-Tracing + Metriken (Core, optional) | mittel | geplant |
 | **Sollte** | G21 | Passwort-Policy nach NIST 800-63B (inkl. Breach-Check) | klein | ✅ erledigt |
 | **Kann** | G23 | WebAuthn/Passkey-Authentifizierung (Extension, phishing-resistent) | groß | geplant |
@@ -380,7 +380,18 @@ bereits abgedeckt (R1–R17); die hier gelisteten Punkte schließen die
   wiederverwenden); [core/config.py](../asterion/core/config.py).
 - **Test:** Limit pro Tenant greift; Tenant A erschöpft sein Budget ohne Tenant B
   zu beeinflussen; `429`-Envelope korrekt.
-- **Aufwand:** mittel. **Status:** geplant.
+- **Aufwand:** mittel. **Status:** ✅ erledigt (v0.1.45). Neu
+  [core/tenant_rate_limit.py](../asterion/core/tenant_rate_limit.py)
+  (`TenantRateLimitMiddleware`): keyt auf `tenant:<slug>` (Slug direkt aus dem
+  Request, ordering-unabhängig), nutzt das bestehende
+  `RateLimiterBackend`-Sliding-Window (`runtime.tenant_rate_limiter`, ersetzbar
+  durch das Redis-Backend für Multi-Worker). Config `tenant_rate_limit_enabled`
+  (Default **aus**) / `_max` (1000) / `_window_seconds` (60); über Budget →
+  `429` (`rate_limited`-Envelope). Requests ohne Tenant (Health/Root/Login)
+  werden hier nicht limitiert. Tests:
+  [tests/operations/test_tenant_rate_limit.py](../tests/operations/test_tenant_rate_limit.py)
+  (Budget greift, Per-Tenant-Isolation des Budgets, kein Limit ohne Tenant, aus
+  per Default).
 
 ### G20 — Observability: OpenTelemetry-Tracing + Metriken (Core, optional)
 

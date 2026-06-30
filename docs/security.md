@@ -52,6 +52,15 @@ The same backend type also throttles the **password-reset request** endpoint
 `_window_seconds`) and the **2FA-login** endpoint (per user), so neither can be
 abused for enumeration / bombing or second-factor brute force.
 
+**Per-tenant request rate limiting (G19).** Beyond the auth-specific limiters,
+`tenant_rate_limit_enabled` turns on a sliding-window budget per tenant
+(`tenant_rate_limit_max` / `_window_seconds`): each tenant-scoped request counts
+against `tenant:<slug>`, and over budget returns `429` (`rate_limited`). Keyed by
+tenant only, so one tenant can never exhaust another's budget — noisy-neighbour
+protection. Off by default; requests without a tenant (health, root, login) are
+not limited here. The in-process default is per-worker; wire the
+`rate_limit_redis` backend (`runtime.tenant_rate_limiter`) for multi-worker.
+
 ### Password policy
 
 New passwords (reset + member-invite completion) pass through a pluggable

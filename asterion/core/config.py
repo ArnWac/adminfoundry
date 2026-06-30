@@ -178,6 +178,20 @@ class CoreAdminConfig:
     #: Timeout (seconds) for the HIBP breach lookup when ``password_hibp_check``.
     password_hibp_timeout_seconds: float = 3.0
 
+    #: Per-tenant request rate limiting (G19, noisy-neighbour protection). **Off
+    #: by default.** When on, each tenant-scoped request (one carrying a resolved
+    #: tenant slug) counts against a per-tenant sliding-window budget; over budget
+    #: returns ``429`` (``rate_limited`` envelope). Keyed by tenant only, so one
+    #: tenant's traffic can never exhaust another's budget. Requests without a
+    #: tenant (health, root, login) are not limited here. The in-process default
+    #: is per-worker; wire a shared :class:`RateLimiterBackend` (the bundled
+    #: ``rate_limit_redis`` extension) for multi-worker deployments.
+    tenant_rate_limit_enabled: bool = False
+    #: Max tenant-scoped requests per window before ``429``.
+    tenant_rate_limit_max: int = 1000
+    #: Sliding-window length (seconds) for the per-tenant request budget.
+    tenant_rate_limit_window_seconds: int = 60
+
     #: Filesystem root for :class:`LocalFileStorage` (Roadmap P4).
     #: When set, ``create_admin`` auto-wires a ``LocalFileStorage`` at
     #: this path as ``runtime.storage`` so :class:`FileField` works
@@ -406,6 +420,18 @@ class CoreAdminConfig:
             password_hibp_timeout_seconds=_env_float(
                 "ASTERION_PASSWORD_HIBP_TIMEOUT_SECONDS",
                 3.0,
+            ),
+            tenant_rate_limit_enabled=_env_bool(
+                "ASTERION_TENANT_RATE_LIMIT_ENABLED",
+                False,
+            ),
+            tenant_rate_limit_max=_env_int(
+                "ASTERION_TENANT_RATE_LIMIT_MAX",
+                1000,
+            ),
+            tenant_rate_limit_window_seconds=_env_int(
+                "ASTERION_TENANT_RATE_LIMIT_WINDOW_SECONDS",
+                60,
             ),
             enable_builtin_ui=_env_bool(
                 "ASTERION_ENABLE_BUILTIN_UI",
@@ -679,6 +705,7 @@ class CoreAdminConfig:
             "invite_token_expire_minutes": self.invite_token_expire_minutes,
             "password_min_length": self.password_min_length,
             "password_hibp_check": self.password_hibp_check,
+            "tenant_rate_limit_enabled": self.tenant_rate_limit_enabled,
             "enable_builtin_ui": self.enable_builtin_ui,
             "enable_builtin_admins": self.enable_builtin_admins,
             "enable_multi_tenant": self.enable_multi_tenant,

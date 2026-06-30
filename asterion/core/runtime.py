@@ -98,6 +98,12 @@ class AdminRuntime:
     #: can replace it with any object satisfying
     #: :class:`asterion.auth.password_policy.PasswordPolicy`.
     password_policy: Any = None
+    #: Per-tenant request rate-limit backend (G19). ``create_admin`` builds an
+    #: in-process default from ``CoreAdminConfig.tenant_rate_limit_*``; replace it
+    #: with a shared :class:`asterion.auth.rate_limiter.RateLimiterBackend` (e.g.
+    #: the ``rate_limit_redis`` extension) for multi-worker deployments. Only
+    #: consulted when ``CoreAdminConfig.tenant_rate_limit_enabled``.
+    tenant_rate_limiter: Any = None
     #: Typed-notifier registry (Roadmap P4.5). Apps and extensions
     #: register implementations keyed by their Protocol type; publishers
     #: look them up with :meth:`NotifierRegistry.get` and treat ``None``
