@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, String, Text
+from sqlalchemy import Boolean, DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from asterion.models.base import GlobalModel
@@ -38,6 +39,13 @@ class Tenant(GlobalModel):
         Boolean,
         default=True,
         nullable=False,
+    )
+
+    #: Set when the tenant is offboarded (roadmap G6). ``None`` means the tenant
+    #: is live. In ``archive`` mode the row survives as a tombstone with this set
+    #: + ``is_active=False`` (slug stays reserved); ``drop`` mode deletes the row.
+    offboarded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)

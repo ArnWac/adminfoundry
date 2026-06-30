@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
@@ -15,6 +16,7 @@ from asterion.db.dependencies import get_async_session
 from asterion.models.tenant import Tenant
 from asterion.models.user import User
 from asterion.security.validation import validate_limit_offset
+from asterion.tenancy.offboarding import TenantNotFoundError, offboard_tenant
 
 router = APIRouter()
 
@@ -131,3 +133,65 @@ async def access_tenant(
         **request_audit_kwargs(request, status_code=200),
     )
     return TenantOut.from_orm_tenant(tenant)
+
+
+class OffboardRequest(BaseModel):
+    mode: Literal["archive", "drop"] = "archive"
+    include_schema_dump: bool = True
+
+
+class OffboardResponse(BaseModel):
+    slug: str
+    schema_name: str
+    mode: str
+    schema_dropped: bool
+    public_rows_deleted: dict[str, int]
+
+
+@router.post("/tenants/{tenant_id}/offboard", response_model=OffboardResponse)
+async def offboard_tenant_route(
+    tenant_id: uuid.UUID,
+    payload: OffboardRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    current: User = Depends(require_superadmin),
+) -> OffboardResponse:
+    """Offboard a tenant (roadmap G6): export → public cleanup → schema drop.
+
+    Superadmin-only and irreversible. The export bundle is **not** returned in
+    the HTTP response (it can be large and contains the tenant's data); operators
+    that need the bundle run ``asterion tenant export`` / ``tenant offboard`` from
+    the CLI, which persists it to a file. The operation writes its own
+    ``tenant_offboard`` audit row with a PII-free summary.
+    """
+    tenant = (
+        await session.execute(select(Tenant).where(Tenant.id == tenant_id))
+    ).scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant not found.",
+        )
+
+    runtime = request.app.state.asterion
+    try:
+        result = await offboard_tenant(
+            runtime.db,
+            tenant.slug,
+            mode=payload.mode,
+            actor_user_id=current.id,
+            include_schema_dump=payload.include_schema_dump,
+        )
+    except TenantNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tenant not found.",
+        ) from exc
+
+    return OffboardResponse(
+        slug=result["slug"],
+        schema_name=result["schema_name"],
+        mode=result["mode"],
+        schema_dropped=result["schema_dropped"],
+        public_rows_deleted=result["public_rows_deleted"],
+    )

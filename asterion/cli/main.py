@@ -4,7 +4,8 @@ Subcommands are organized into:
   * top-level: create-superadmin, doctor, init, inspect-registry
   * db:        check, upgrade, upgrade-public, upgrade-tenant, upgrade-tenants, current, heads
   * migrate:   generate, apply, status
-  * tenant:    create, list, bootstrap, upgrade
+  * tenant:    create, list, bootstrap, upgrade, disable, enable, export, offboard
+  * privacy:   retention-run, export-subject
   * permissions: sync, list, check
   * service-account: create, delete
 """
@@ -13,14 +14,16 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 import subprocess
 import sys
-from datetime import UTC
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import typer
-from sqlalchemy import CursorResult, select, text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from asterion.auth.password import hash_password
@@ -51,6 +54,7 @@ permissions_app = typer.Typer(help="Permission catalog management.")
 user_app = typer.Typer(help="User management commands.")
 audit_app = typer.Typer(help="Audit log management.")
 service_account_app = typer.Typer(help="Service / machine account management.")
+privacy_app = typer.Typer(help="Privacy / data-protection commands (retention, anonymisation).")
 
 app.add_typer(db_app, name="db")
 app.add_typer(migrate_app, name="migrate")
@@ -59,6 +63,7 @@ app.add_typer(permissions_app, name="permissions")
 app.add_typer(user_app, name="user")
 app.add_typer(audit_app, name="audit")
 app.add_typer(service_account_app, name="service-account")
+app.add_typer(privacy_app, name="privacy")
 
 
 # ---------------------------------------------------------------------------
@@ -763,6 +768,113 @@ async def _tenant_set_active(slug: str, *, active: bool) -> None:
         await db.dispose()
 
 
+@tenant_app.command("export")
+def tenant_export(
+    slug: str = typer.Argument(..., help="Tenant slug"),
+    out: Path = typer.Option(..., "--out", help="Path to write the JSON export bundle."),
+):
+    """Write a tenant's full export bundle to a JSON file (G6).
+
+    Non-destructive: dumps public metadata + memberships and (PostgreSQL) every
+    table in the tenant schema. Run this before ``tenant offboard`` to satisfy
+    the AVV "Rückgabe" obligation, or any time you need a tenant snapshot.
+    """
+    asyncio.run(_tenant_export(slug, out))
+
+
+async def _tenant_export(slug: str, out: Path) -> None:
+    from asterion.tenancy.offboarding import TenantNotFoundError, export_tenant
+
+    try:
+        slug = validate_tenant_slug(slug)
+    except ValidationError as exc:
+        typer.echo(f"Invalid slug: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    config = _load_config()
+    db = _make_db(config)
+    try:
+        bundle = await export_tenant(db, slug)
+    except TenantNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    finally:
+        await db.dispose()
+
+    out.write_text(json.dumps(bundle, indent=2, sort_keys=True), encoding="utf-8")
+    typer.echo(f"Exported tenant {slug!r} to {out}.")
+
+
+@tenant_app.command("offboard")
+def tenant_offboard(
+    slug: str = typer.Argument(..., help="Tenant slug"),
+    mode: str = typer.Option(
+        "archive",
+        "--mode",
+        help="'archive' keeps a tombstone Tenant row; 'drop' deletes it too.",
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", help="Write the export bundle to this JSON file before dropping."
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Skip the interactive confirmation."),
+):
+    """Offboard a tenant (G6): export → public cleanup → DROP SCHEMA CASCADE.
+
+    Irreversible. Exports first (use ``--out`` to keep the bundle), deletes the
+    tenant's public rows (memberships, audit, impersonation logs, saved filters),
+    drops the tenant schema (PostgreSQL), then either archives or drops the
+    ``Tenant`` row. Writes a ``tenant_offboard`` audit row.
+    """
+    if mode not in ("archive", "drop"):
+        typer.echo(f"Invalid --mode: {mode!r}. Expected 'archive' or 'drop'.", err=True)
+        raise typer.Exit(code=2)
+    if not yes:
+        typer.echo(
+            f"About to offboard tenant {slug!r} (mode={mode}): export, delete public "
+            "rows, and drop the tenant schema. This is irreversible."
+        )
+        if not typer.confirm("Proceed?"):
+            typer.echo("Aborted.")
+            raise typer.Exit(code=1)
+
+    asyncio.run(_tenant_offboard(slug, mode, out))
+
+
+async def _tenant_offboard(slug: str, mode: str, out: Path | None) -> None:
+    from asterion.tenancy.offboarding import (
+        OffboardMode,
+        TenantNotFoundError,
+        offboard_tenant,
+    )
+
+    try:
+        slug = validate_tenant_slug(slug)
+    except ValidationError as exc:
+        typer.echo(f"Invalid slug: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    config = _load_config()
+    db = _make_db(config)
+    try:
+        result = await offboard_tenant(db, slug, mode=cast("OffboardMode", mode))
+    except TenantNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    finally:
+        await db.dispose()
+
+    if out is not None:
+        out.write_text(json.dumps(result["export"], indent=2, sort_keys=True), encoding="utf-8")
+        typer.echo(f"Export bundle written to {out}.")
+
+    deleted = result["public_rows_deleted"]
+    typer.echo(
+        f"Offboarded tenant {slug!r} (mode={mode}, schema_dropped={result['schema_dropped']})."
+    )
+    for table, count in deleted.items():
+        typer.echo(f"  public {table} deleted: {count}")
+
+
 # ---------------------------------------------------------------------------
 # permissions sub-commands
 # ---------------------------------------------------------------------------
@@ -1044,9 +1156,69 @@ async def _user_set_active(*, email: str, active: bool) -> None:
                     return
                 user.is_active = active
                 if not active:
-                    # Disabling revokes existing tokens too.
+                    # Disabling revokes existing tokens too, and stamps the
+                    # G2 retention clock (deactivated_at).
                     user.token_version = (user.token_version or 0) + 1
+                    user.deactivated_at = datetime.now(UTC)
+                else:
+                    # Re-enabling clears the retention clock.
+                    user.deactivated_at = None
         typer.echo(f"User {email} {'enabled' if active else 'disabled'}.")
+    finally:
+        await db.dispose()
+
+
+@user_app.command("anonymize")
+def user_anonymize(
+    email: str = typer.Option(..., "--email"),
+    yes: bool = typer.Option(False, "--yes", help="Skip the interactive confirmation."),
+):
+    """Irreversibly anonymise a user (DSGVO Art. 17 stage 2). NOT reversible.
+
+    Tombstones the user's PII (email/name/2FA/password) and redacts the actor
+    PII the user left in the public audit log. The row survives so audit/FK
+    integrity holds. Use 'user disable' for the reversible deactivation.
+
+    Note: per-tenant audit logs are anonymised by the retention job, which can
+    set each tenant's ``search_path``; this command only reaches the public log.
+    """
+    if not yes:
+        typer.echo(f"About to IRREVERSIBLY anonymise {email!r}. This cannot be undone.")
+        if not typer.confirm("Proceed?"):
+            typer.echo("Aborted.")
+            raise typer.Exit(code=1)
+    asyncio.run(_user_anonymize(email=email))
+
+
+async def _user_anonymize(*, email: str) -> None:
+    from asterion.audit import USER_ANONYMIZE, record_audit_in_session
+    from asterion.privacy.anonymizer import anonymize_audit_actor, anonymize_user
+
+    config = _load_config()
+    db = _make_db(config)
+    try:
+        async with db.session() as session:
+            async with session.begin():
+                user = await _find_user_by_email(session, email)
+                if user is None:
+                    typer.echo(f"User {email!r} not found.", err=True)
+                    raise typer.Exit(code=2)
+                user_id = user.id
+                anonymize_user(user)
+                redacted = await anonymize_audit_actor(session, user_id)
+                await session.flush()
+                await record_audit_in_session(
+                    session,
+                    action=USER_ANONYMIZE,
+                    actor=None,
+                    resource="users",
+                    record_id=user_id,
+                    changes={"user_id": str(user_id), "audit_rows_redacted": redacted},
+                    method="CLI",
+                    path="user anonymize",
+                    status_code=0,
+                )
+        typer.echo(f"Anonymised {email} (redacted {redacted} public audit row(s)).")
     finally:
         await db.dispose()
 
@@ -1058,50 +1230,143 @@ async def _user_set_active(*, email: str, active: bool) -> None:
 
 @audit_app.command("prune")
 def audit_prune(
-    days: int = typer.Option(
-        90, "--days", min=1, help="Delete audit rows older than this many days."
+    days: int | None = typer.Option(
+        None,
+        "--days",
+        min=1,
+        help="Delete audit rows older than this many days "
+        "(default: config audit_retention_days).",
+    ),
+    all_tenants: bool = typer.Option(
+        False,
+        "--all-tenants",
+        help="Also prune each tenant schema's tenant_audit_logs (PostgreSQL).",
     ),
     yes: bool = typer.Option(False, "--yes", help="Skip the interactive confirmation."),
 ):
-    """Delete audit_logs rows older than ``--days``.
+    """Delete audit rows older than ``--days`` (G3 retention).
 
-    Audit data grows unbounded by design. Schedule this as a cron job
-    (or run manually) to keep the table size in check.
+    Prunes the public ``audit_logs`` table; with ``--all-tenants`` it also
+    sweeps every tenant schema's ``tenant_audit_logs`` (PostgreSQL only). Audit
+    data grows unbounded by design — schedule this as a cron job.
     """
+    config = _load_config()
+    effective_days = days if days is not None else config.audit_retention_days
+    scope = "public + all tenants" if all_tenants else "public"
     if not yes:
-        typer.echo(f"About to delete audit rows older than {days} days.")
+        typer.echo(f"About to delete audit rows older than {effective_days} days ({scope}).")
         confirm = typer.confirm("Proceed?")
         if not confirm:
             typer.echo("Aborted.")
             raise typer.Exit(code=1)
 
-    asyncio.run(_audit_prune(days))
+    asyncio.run(_audit_prune(config, effective_days, all_tenants))
 
 
-async def _audit_prune(days: int) -> None:
-    from datetime import datetime, timedelta
+async def _audit_prune(config, days: int, all_tenants: bool) -> None:
+    from asterion.privacy.retention import apply_retention
 
-    from sqlalchemy import delete
+    db = _make_db(config)
+    try:
+        results = await apply_retention(db, retention_days=days, all_tenants=all_tenants)
+        total = sum(results.values())
+        typer.echo(f"Pruned {total} audit row(s) older than {days} days.")
+        for scope, count in results.items():
+            typer.echo(f"  {scope}: {count}")
+    finally:
+        await db.dispose()
 
-    from asterion.models.audit_log import AuditLog
 
-    cutoff = datetime.now(UTC) - timedelta(days=days)
+# ---------------------------------------------------------------------------
+# privacy sub-commands (G2/G3 retention)
+# ---------------------------------------------------------------------------
+
+
+@privacy_app.command("retention-run")
+def privacy_retention_run(
+    yes: bool = typer.Option(False, "--yes", help="Skip the interactive confirmation."),
+):
+    """Run the full data-retention job (G2/G3).
+
+    Prunes audit logs (public + every tenant schema) older than
+    ``audit_retention_days`` AND — when ``user_anonymize_after_days`` is set —
+    irreversibly anonymises users deactivated longer ago than that. Schedule as
+    a periodic job. Anonymisation cannot be undone.
+    """
+    config = _load_config()
+    days = config.audit_retention_days
+    anon = config.user_anonymize_after_days
+    if not yes:
+        typer.echo(
+            f"About to prune audit rows older than {days} days (public + all tenants)"
+            + (
+                f" and anonymise users deactivated > {anon} days ago."
+                if anon is not None
+                else " (auto-anonymisation disabled: user_anonymize_after_days unset)."
+            )
+        )
+        if not typer.confirm("Proceed?"):
+            typer.echo("Aborted.")
+            raise typer.Exit(code=1)
+
+    asyncio.run(_privacy_retention_run(config))
+
+
+async def _privacy_retention_run(config) -> None:
+    from asterion.privacy.retention import apply_retention
+
+    db = _make_db(config)
+    try:
+        results = await apply_retention(
+            db,
+            retention_days=config.audit_retention_days,
+            all_tenants=True,
+            user_anonymize_after_days=config.user_anonymize_after_days,
+        )
+        anonymized = results.pop("anonymized_users", 0)
+        pruned = sum(results.values())
+        typer.echo(f"Retention run complete: pruned {pruned} audit row(s), anonymised {anonymized} user(s).")
+        for scope, count in results.items():
+            typer.echo(f"  audit[{scope}]: {count}")
+    finally:
+        await db.dispose()
+
+
+@privacy_app.command("export-subject")
+def privacy_export_subject(
+    user_id: str = typer.Argument(..., help="Data subject's user id (UUID)."),
+    out: Path = typer.Option(..., "--out", help="Path to write the JSON export bundle."),
+):
+    """Export everything asterion holds about one user (G8, Art. 15/20).
+
+    Writes a JSON bundle of the user's public/global data (``users`` row minus
+    secrets, memberships, audit actions, impersonation rows, saved filters, DSAR
+    history). Tenant-local business data is out of scope (tenant isolation).
+    """
+    asyncio.run(_privacy_export_subject(user_id, out))
+
+
+async def _privacy_export_subject(user_id: str, out: Path) -> None:
+    from asterion.privacy.export import SubjectNotFoundError, export_subject
+
+    try:
+        uid = uuid.UUID(user_id)
+    except ValueError as exc:
+        typer.echo(f"Invalid user id (expected a UUID): {user_id!r}", err=True)
+        raise typer.Exit(code=2) from exc
 
     config = _load_config()
     db = _make_db(config)
     try:
-        async with db.session() as session:
-            async with session.begin():
-                result = await session.execute(
-                    delete(AuditLog).where(AuditLog.created_at < cutoff)
-                )
-        # DML execute() returns a CursorResult at runtime; the static type is the
-        # base Result, which doesn't expose rowcount.
-        rowcount = cast(CursorResult[Any], result).rowcount
-        deleted = rowcount if rowcount is not None else 0
-        typer.echo(f"Pruned {deleted} audit row(s) older than {days} days.")
+        bundle = await export_subject(db, uid)
+    except SubjectNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
     finally:
         await db.dispose()
+
+    out.write_text(json.dumps(bundle, indent=2, sort_keys=True), encoding="utf-8")
+    typer.echo(f"Exported subject {user_id} to {out}.")
 
 
 # ---------------------------------------------------------------------------

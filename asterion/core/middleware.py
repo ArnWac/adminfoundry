@@ -21,11 +21,21 @@
     bundled UI uses inline config scripts that a strict ``script-src 'self'``
     would block, so the default is header-less, but API-first deployments with
     their own frontend can opt into a strict policy.
+
+    **CSP nonce (G10).** If the configured policy contains the literal token
+    ``{nonce}`` (:data:`CSP_NONCE_PLACEHOLDER`), the middleware mints a fresh
+    per-request nonce, substitutes it into the header, and publishes it on
+    ``request.state.csp_nonce`` so the bundled UI's templates can stamp their
+    inline ``<script>`` blocks with a matching ``nonce=…``. That lets a strict
+    ``script-src 'self' 'nonce-{nonce}'`` cover the bundled UI's own inline
+    config while still blocking any injected inline script — closing the XSS gap
+    without dropping to ``'unsafe-inline'``.
 """
 
 from __future__ import annotations
 
 import logging
+import secrets
 import time
 import uuid
 
@@ -33,6 +43,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 REQUEST_ID_HEADER = "X-Request-ID"
+
+#: Literal token an operator places in ``content_security_policy`` (e.g.
+#: ``script-src 'self' 'nonce-{nonce}'``) to opt into per-request nonces.
+CSP_NONCE_PLACEHOLDER = "{nonce}"
 
 access_logger = logging.getLogger("asterion.access")
 
@@ -120,14 +134,26 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, *, csp: str | None = None) -> None:
         super().__init__(app)
         self._csp = csp
+        #: True when the policy opts into per-request nonces (G10).
+        self._uses_nonce = csp is not None and CSP_NONCE_PLACEHOLDER in csp
 
     async def dispatch(self, request: Request, call_next):
+        # Mint the nonce BEFORE the handler runs so templates rendered inside
+        # call_next can read request.state.csp_nonce and stamp their inline
+        # scripts with it. 16 random bytes, base64url — well above the CSP
+        # 128-bit recommendation.
+        nonce: str | None = None
+        if self._uses_nonce:
+            nonce = secrets.token_urlsafe(16)
+            request.state.csp_nonce = nonce
+
         response = await call_next(request)
         for header, value in _SECURITY_HEADERS.items():
             response.headers.setdefault(header, value)
-        # Review R14: emit a CSP only when configured. The bundled UI is not
-        # compatible with a strict policy (inline config scripts), so the
-        # default (None) stays header-less.
+        # Review R14: emit a CSP only when configured. The bundled UI needs the
+        # nonce path (G10) to survive a strict ``script-src``; without ``{nonce}``
+        # the policy is sent verbatim (API-first deployments with their own UI).
         if self._csp:
-            response.headers.setdefault("Content-Security-Policy", self._csp)
+            policy = self._csp.replace(CSP_NONCE_PLACEHOLDER, nonce) if nonce else self._csp
+            response.headers.setdefault("Content-Security-Policy", policy)
         return response

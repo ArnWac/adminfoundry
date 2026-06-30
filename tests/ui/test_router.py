@@ -275,3 +275,44 @@ def test_builtin_ui_disabled(tmp_path):
     with TestClient(app, raise_server_exceptions=False) as c:
         resp = c.get("/admin/login")
     assert resp.status_code == 404
+
+
+# --- CSP nonce hardening (G10) ---
+
+
+def test_no_nonce_attr_when_csp_unset(client):
+    # Default: no CSP, so inline scripts carry no nonce (status quo).
+    body = client.get("/admin/dashboard").text
+    assert "nonce=" not in body
+
+
+def _nonce_ui_app(tmp_path):
+    return create_admin(
+        config=CoreAdminConfig(
+            database_url=f"sqlite+aiosqlite:///{tmp_path / 'ui-nonce.db'}",
+            secret_key="test-ui-nonce",
+            enable_multi_tenant=False,
+            enable_builtin_admins=False,
+            content_security_policy="script-src 'self' 'nonce-{nonce}'",
+        )
+    )
+
+
+def test_inline_script_nonce_matches_csp_header(tmp_path):
+    """The inline config <script> must carry the same nonce the CSP header
+    advertises — otherwise a strict policy would block the bundled UI."""
+    app = _nonce_ui_app(tmp_path)
+    with TestClient(app, raise_server_exceptions=False) as c:
+        resp = c.get("/admin/dashboard")
+    header_nonce = resp.headers["Content-Security-Policy"].split("'nonce-", 1)[1].split("'", 1)[0]
+    assert f'<script nonce="{header_nonce}"' in resp.text
+    # The external module script is stamped too (covers 'strict-dynamic').
+    assert f'admin.js" nonce="{header_nonce}"' in resp.text
+
+
+def test_login_page_nonce_matches_csp_header(tmp_path):
+    app = _nonce_ui_app(tmp_path)
+    with TestClient(app, raise_server_exceptions=False) as c:
+        resp = c.get("/admin/login")
+    header_nonce = resp.headers["Content-Security-Policy"].split("'nonce-", 1)[1].split("'", 1)[0]
+    assert f'nonce="{header_nonce}"' in resp.text

@@ -62,7 +62,8 @@ async def test_record_audit_writes_row(db):
     assert row.method == "POST"
     assert row.path == "/api/v1/auth/login"
     assert row.status_code == 200
-    assert row.changes == {"email": "user@example.com"}
+    # G7: ``email`` is PII, so its value is masked by default (audit_pii_mode).
+    assert row.changes == {"email": "***PII***"}
 
 
 @pytest.mark.asyncio
@@ -77,7 +78,8 @@ async def test_record_audit_sanitizes_changes(db):
         },
     )
     rows = await _all_audits(db)
-    assert rows[0].changes["email"] == "x@y.com"
+    # G7: secrets are ***REDACTED***; PII (email) is masked ***PII***.
+    assert rows[0].changes["email"] == "***PII***"
     assert rows[0].changes["password"] == "***REDACTED***"
     assert rows[0].changes["nested"]["access_token"] == "***REDACTED***"
     assert rows[0].changes["nested"]["ok"] is True
@@ -160,7 +162,8 @@ def test_audit_payload_sanitizes_changes():
         action=LOGIN_SUCCESS,
         changes={"email": "x@y.com", "password": "secret"},
     )
-    assert row.changes["email"] == "x@y.com"
+    # G7: email is PII (masked), password is a secret (redacted).
+    assert row.changes["email"] == "***PII***"
     assert row.changes["password"] == "***REDACTED***"
 
 

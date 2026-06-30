@@ -44,6 +44,10 @@ def _template_context(
         "record_id": record_id,
         "page_id": page_id,
         "page_module": page_module,
+        # CSP nonce (G10): set by SecurityHeadersMiddleware when the configured
+        # policy opts in via ``{nonce}``. ``None`` otherwise → templates emit no
+        # nonce attribute and the (header-less / nonce-less) status quo holds.
+        "csp_nonce": getattr(request.state, "csp_nonce", None),
     }
 
 

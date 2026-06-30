@@ -23,7 +23,7 @@
     </div>
   </div>
 
-  <script>
+  <script {% if csp_nonce %}nonce="{{ csp_nonce }}"{% endif %}>
     window.ASTERION = {
       uiPath: {{ admin_ui_path | tojson }},
       authPrefix: {{ auth_api_prefix | tojson }},
@@ -31,6 +31,6 @@
       view: "login-complete",
     };
   </script>
-  <script type="module" src="{{ admin_ui_path }}/static/admin.js"></script>
+  <script type="module" src="{{ admin_ui_path }}/static/admin.js" {% if csp_nonce %}nonce="{{ csp_nonce }}"{% endif %}></script>
 </body>
 </html>

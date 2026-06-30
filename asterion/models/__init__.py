@@ -1,4 +1,5 @@
 from asterion.models.audit_log import AuditLog
+from asterion.models.data_subject_request import DataSubjectRequest
 from asterion.models.impersonation_log import ImpersonationLog
 from asterion.models.password_reset_token import PasswordResetToken
 from asterion.models.permission_catalog import PermissionCatalog
@@ -17,6 +18,7 @@ from asterion.models.user import User
 
 __all__ = [
     "AuditLog",
+    "DataSubjectRequest",
     "ImpersonationLog",
     "PasswordResetToken",
     "PermissionCatalog",

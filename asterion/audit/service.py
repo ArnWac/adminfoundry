@@ -31,8 +31,10 @@ from asterion.core.net import request_client_ip
 from asterion.db.session import DatabaseManager
 from asterion.models.audit_log import AuditLog
 from asterion.models.tenant_audit_log import TenantAuditLog
+from asterion.privacy.redaction import AuditPIIMode, redact_pii, suppress_behavioral
 from asterion.providers.base import AdminPrincipal
 from asterion.security.sanitize import sanitize_payload
+from asterion.tenancy.guard import assert_tenant_search_path
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,10 @@ ADMIN_ACTION = "admin_action"
 IMPERSONATION_START = "impersonation_start"
 IMPERSONATION_STOP = "impersonation_stop"
 TENANT_ACCESS = "tenant_access"
+TENANT_OFFBOARD = "tenant_offboard"
+USER_ANONYMIZE = "user_anonymize"
+SUBJECT_EXPORT = "subject_export"
+SUBJECT_REQUEST_LOG = "subject_request_log"
 
 
 def request_audit_kwargs(
@@ -106,6 +112,8 @@ def audit_payload(
     changes: Mapping[str, Any] | None = None,
     ip_address: str | None = None,
     tenant_scoped: bool = False,
+    pii_mode: AuditPIIMode | None = None,
+    behavioral_detail: bool | None = None,
 ) -> AuditLog | TenantAuditLog:
     """Build an audit row, sanitizing ``changes`` along the way.
 
@@ -120,11 +128,19 @@ def audit_payload(
       ``tenant_id`` (the schema *is* the tenant), so ``tenant_id`` is
       ignored here.
 
+    ``changes`` are first stripped of *secret* keys (passwords, tokens), then
+    PII-redacted (G7): values of ``IDENTITY``/``CONTACT``/``SENSITIVE`` fields are
+    masked per ``pii_mode`` (defaults to ``audit_pii_mode``); finally the G5
+    behavioural-detail policy suppresses ``BEHAVIORAL`` field values unless
+    ``behavioral_detail`` (defaults to ``audit_behavioral_detail``) is on.
+
     Performs no I/O — callers persist the row.
     """
     sanitized: dict[str, Any] | None = None
     if changes is not None:
         sanitized = sanitize_payload(dict(changes))
+        sanitized = redact_pii(sanitized, mode=pii_mode)
+        sanitized = suppress_behavioral(sanitized, detail=behavioral_detail)
 
     common = {
         "method": method,
@@ -149,9 +165,16 @@ async def record_audit_in_session(session: AsyncSession, **kw: Any) -> None:
     The savepoint isolates the audit insert from the main transaction so a
     failure here cannot roll back the caller's work. Any error is logged
     and swallowed — this function never raises.
+
+    For a tenant-scoped row (``tenant_scoped=True``) the ``search_path`` is
+    asserted first (K3): if it is not pointing at a tenant schema the insert is
+    skipped rather than written into the wrong schema — the savepoint rolls
+    back and the failure is logged like any other audit miss.
     """
     try:
         async with session.begin_nested():
+            if kw.get("tenant_scoped"):
+                await assert_tenant_search_path(session)
             session.add(audit_payload(**kw))
             await session.flush()
     except Exception:

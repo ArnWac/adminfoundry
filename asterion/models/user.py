@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Integer, String
+from sqlalchemy import Boolean, DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from asterion.models.base import GlobalModel
@@ -47,6 +48,16 @@ class User(GlobalModel):
         Integer,
         default=0,
         nullable=False,
+    )
+
+    #: When the account was deactivated (``is_active`` flipped to False via
+    #: ``user disable``). Starts the G2 retention clock: the
+    #: ``privacy retention-run`` job auto-anonymises accounts whose
+    #: ``deactivated_at`` is older than ``user_anonymize_after_days``. ``None``
+    #: while active; cleared again on re-enable.
+    deactivated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     #: Marks a token-only service / machine account (provisioned via

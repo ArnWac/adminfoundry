@@ -5,6 +5,7 @@ from collections.abc import Callable, Iterable
 
 from fastapi import FastAPI
 
+from asterion.auth.rate_limiter import InMemoryLoginRateLimiter
 from asterion.authz.registry import PermissionRegistry
 from asterion.builtins import install_builtin_admins
 from asterion.core.config import CoreAdminConfig
@@ -15,6 +16,10 @@ from asterion.core.runtime import AdminRuntime, ProviderSet
 from asterion.db.session import DatabaseManager
 from asterion.extensions import AdminExtension, ExtensionContext
 from asterion.extensions.lifecycle import compose_lifespan, run_setup_phase
+from asterion.privacy.redaction import (
+    set_default_audit_pii_mode,
+    set_default_behavioral_detail,
+)
 from asterion.providers import (
     BuiltinJWTAuthProvider,
     BuiltinPermissionProvider,
@@ -48,6 +53,14 @@ def create_admin(
 ) -> FastAPI:
     config = config or CoreAdminConfig.from_env()
     config.validate()
+
+    # Publish the process-wide audit PII-redaction mode (G7) + behavioural-detail
+    # policy (G5) so the audit writer's many call sites don't each need the config
+    # threaded through. Mirrors the framework's other cross-cutting singletons
+    # (PII / protected fields). Secure defaults ("redact" + suppress) already
+    # apply before this runs.
+    set_default_audit_pii_mode(config.audit_pii_mode)
+    set_default_behavioral_detail(config.audit_behavioral_detail)
 
     # §9: external user-mode must carry at least an explicit
     # ``auth_provider`` — otherwise the framework would silently fall
@@ -118,6 +131,10 @@ def create_admin(
         invite_notifier=invite_notifier,
         storage=storage,
         login_rate_limiter=login_rate_limiter,
+        password_reset_rate_limiter=InMemoryLoginRateLimiter(
+            max_failures=config.password_reset_rate_limit_max,
+            window_seconds=config.password_reset_rate_limit_window_seconds,
+        ),
     )
 
     # Mirror the explicit ``password_reset_notifier`` into the generic

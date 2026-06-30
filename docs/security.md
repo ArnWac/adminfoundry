@@ -30,12 +30,14 @@ tenant_id         optional tenant scope (impersonation only)
 
 ### Revocation
 
-The primary mechanism is **user-wide** via `User.token_version`. Increment the
-column and every previously issued token for that user fails its `tkv` check on
-the next request (this is what "log out everywhere" does).
+Two layers, both checked on every request in `get_current_user`:
 
-Single-token revocation (a `RevokedToken` table keyed by `jti`) is intentionally
-out of scope; add it if per-session logout becomes a requirement.
+* **User-wide** via `User.token_version`. Increment the column and every
+  previously issued token for that user fails its `tkv` check on the next
+  request (this is what "log out everywhere" does; also implicit on deactivate).
+* **Per-token** via the `RevokedToken` table keyed by `jti` (`is_token_revoked`
+  in [`auth/dependencies.py`](../asterion/auth/dependencies.py)) — single-session
+  logout. Tombstones self-expire at the token's own `expires_at`.
 
 ### Login rate limiting
 
@@ -44,6 +46,11 @@ login attempts. It is **not distributed**: under `uvicorn --workers N` the
 effective limit becomes `N × threshold`. For multi-worker production, wire a
 shared backend that satisfies the `RateLimiterBackend` Protocol — the bundled
 `asterion.extensions.rate_limit_redis` provides one.
+
+The same backend type also throttles the **password-reset request** endpoint
+(per email, separate counter — `password_reset_rate_limit_max` /
+`_window_seconds`) and the **2FA-login** endpoint (per user), so neither can be
+abused for enumeration / bombing or second-factor brute force.
 
 ## Authorization
 
@@ -162,9 +169,12 @@ Every login, CRUD write, admin action, and impersonation start writes one
 * **Isolated session** (`record_audit`) for login (which re-raises after audit
   on failure paths — an in-session row would otherwise roll back).
 
-Audit values pass through the sanitizer before insert. There is no automatic
-retention — see [Operating notes](deployment.md#operating-notes) for the cleanup
-query.
+Audit `changes` pass through three passes before insert: secret stripping
+(sanitizer), PII masking (G7, `audit_pii_mode`), and behavioural-value
+suppression (G5, `audit_behavioral_detail`). Retention is handled by
+`asterion audit prune --all-tenants` / `asterion privacy retention-run`
+(`audit_retention_days`, default 90). Full detail in
+[AUDIT_LOGGING.md](AUDIT_LOGGING.md).
 
 ## Error envelope
 
@@ -190,21 +200,31 @@ Be explicit about what the framework does and does not guarantee:
   import the concrete built-in `User`. An external IdP runs the admin surface;
   superadmin/root tooling and audit-actor resolution remain built-in by design
   for now.
-* **No Content-Security-Policy by default** (the bundled UI's inline config
-  scripts would break a strict `script-src 'self'`). Set
+* **No Content-Security-Policy by default**, but one is fully supported. Set
   `CoreAdminConfig.content_security_policy` (or
-  `ASTERION_CONTENT_SECURITY_POLICY`) to emit one — recommended for API-first
-  deployments with their own frontend, e.g.
-  `default-src 'self'; frame-ancestors 'none'`. The built-in UI keeps the access
-  token in `localStorage`, so a strict CSP is the main defence against token
-  theft via XSS.
+  `ASTERION_CONTENT_SECURITY_POLICY`) to emit one. The built-in UI keeps the
+  access token in `localStorage`, so a strict CSP is the main defence against
+  token theft via XSS — strongly recommended. **With the bundled UI (G10):**
+  include the literal `{nonce}` token in your `script-src`; the framework mints a
+  per-request nonce, substitutes it into the header, and stamps the UI's inline
+  `<script>` blocks with it, so a strict policy covers the UI's own scripts while
+  blocking injected ones. Recommended:
+  `default-src 'self'; script-src 'self' 'nonce-{nonce}'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'`.
+  API-first deployments (no bundled UI) can use any static strict policy
+  (`default-src 'self'; frame-ancestors 'none'`) — no `{nonce}` needed.
 * **Client IP ignores `X-Forwarded-For` by default** (tenant IP allowlist +
   audit `ip_address` see the direct peer). Behind a reverse proxy, set
   `CoreAdminConfig.trusted_proxy_count` (or `ASTERION_TRUSTED_PROXY_COUNT`) to
   the number of trusted hops and run `uvicorn --proxy-headers`. Never set it
   above the real hop count — that would let clients spoof the IP via the header.
-* **No automatic audit retention.** Schedule
-  `DELETE FROM audit_logs WHERE created_at < NOW() - INTERVAL '90 days';`.
+* **Audit rows are not tamper-evident.** They are mutable and prunable — no
+  hash-chain / WORM / legal-hold yet (roadmap G16). Restrict DB write access and
+  ship logs off-box for a regulated context. See
+  [AUDIT_LOGGING.md](AUDIT_LOGGING.md#tamper-evidence-limitation).
+* **PII is not encrypted at the field level** (roadmap G22), so live-DB erasure
+  (anonymisation) does not propagate into pre-existing backups/PITR. Document a
+  backup-rotation window — see
+  [DATA_RETENTION.md](DATA_RETENTION.md#erasure-vs-backups-the-hard-part).
 
 ## See also
 
@@ -212,3 +232,9 @@ Be explicit about what the framework does and does not guarantee:
 * [Multi-tenancy](tenancy.md) — schema isolation and tenant RBAC.
 * [Service accounts](auth-architecture.md#service--machine-accounts) — token-only
   machine callers.
+* [Privacy](PRIVACY.md) · [Data retention](DATA_RETENTION.md) ·
+  [Audit logging](AUDIT_LOGGING.md) · [Data processing](DATA_PROCESSING.md) —
+  data protection.
+* [Governance](GOVERNANCE.md) · [Threat model](THREAT_MODEL.md) ·
+  [Permission matrix](permission-matrix.md) ·
+  [Shared responsibility](shared-responsibility.md) · [ADRs](adr/README.md).

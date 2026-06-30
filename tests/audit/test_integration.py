@@ -147,7 +147,9 @@ def test_login_success_writes_audit(app):
     assert len(rows) == 1
     assert rows[0].path == "/api/v1/auth/login"
     assert rows[0].status_code == 200
-    assert rows[0].changes == {"email": "alice@example.com"}
+    # G7: the email in ``changes`` is masked; ``actor_label`` keeps the actor's
+    # email (it's the audit's WHO column, redacted only on anonymisation — G2).
+    assert rows[0].changes == {"email": "***PII***"}
     assert rows[0].actor_label == "alice@example.com"
 
 

@@ -11,6 +11,7 @@ TenantResolution = Literal["header", "subdomain"]
 DateFormat = Literal["locale", "iso", "eu", "us", "custom"]
 Environment = Literal["development", "test", "production"]
 UserMode = Literal["builtin", "external"]
+AuditPIIMode = Literal["redact", "hash", "keep"]
 
 T = TypeVar("T", bound=str)
 
@@ -142,6 +143,15 @@ class CoreAdminConfig:
     #: Password-reset token lifetime (Roadmap 3.3). Default 30 minutes
     #: — short because the link grants account access.
     password_reset_token_expire_minutes: int = 30
+    #: Password-reset request throttle (per email, per window). The reset
+    #: endpoint always returns 202 (anti-enumeration); this caps how many reset
+    #: emails / tokens a single address can trigger before further requests are
+    #: rejected with 429 — blunting email-bombing and token-generation abuse.
+    #: Every request is counted (existent account or not), so the throttle never
+    #: reveals whether an account exists. It is a **separate** counter from the
+    #: login limiter.
+    password_reset_rate_limit_max: int = 5
+    password_reset_rate_limit_window_seconds: int = 15 * 60
     #: Member-invite token lifetime. Default 7 days — an invited user
     #: needs longer than a reset to notice the email and set a password.
     #: Shares the single-use ``password_reset_tokens`` machinery; the
@@ -175,6 +185,45 @@ class CoreAdminConfig:
     #: Set False to drop the route entirely — e.g. a single-tenant app with no
     #: support-impersonation workflow that doesn't want the surface at all.
     enable_impersonation: bool = True
+
+    #: Require a non-empty ``reason`` on every impersonation request (G9). When
+    #: ``True`` (default, governance-friendly) a ``POST {root}/impersonate``
+    #: without a reason is rejected with 422, and the reason is persisted on the
+    #: ``ImpersonationLog`` row + the audit ``changes`` so support access to
+    #: another user's (e.g. employee) data always carries a documented purpose.
+    #: Set ``False`` to keep the reason optional (pre-G9 behaviour).
+    impersonation_require_reason: bool = True
+
+    #: Default audit-log retention in days (G3). The ``asterion audit prune``
+    #: command deletes audit rows older than this from the public ``audit_logs``
+    #: and — with ``--all-tenants`` on PostgreSQL — from every tenant schema's
+    #: ``tenant_audit_logs``. Storage limitation (Art. 5) per tenant.
+    audit_retention_days: int = 90
+
+    #: Retention period (days) after which a *deactivated* user is automatically
+    #: anonymised by ``privacy retention-run`` (G2 stage 2). Measured from
+    #: ``User.deactivated_at``. ``None`` (default) → no auto-anonymisation; users
+    #: are only anonymised manually (``user anonymize`` / ``DELETE {root}/users``).
+    #: Set this only above any legal minimum-retention period (e.g. payroll /
+    #: working-time records) — see docs/DATA_RETENTION.md.
+    user_anonymize_after_days: int | None = None
+
+    #: How PII values in the audit ``changes`` diff are handled (G7). The audit
+    #: writer always strips *secret* keys; this controls *personal* data of
+    #: fields classified in the PII registry (``email``, ``full_name``, …).
+    #: ``"redact"`` (default, data-minimising) masks the value, ``"hash"``
+    #: replaces it with a short SHA-256 tag (equal values stay correlatable
+    #: without revealing them), ``"keep"`` retains the raw value (opt-out).
+    audit_pii_mode: AuditPIIMode = "redact"
+
+    #: Whether the audit ``changes`` diff keeps the *values* of fields classified
+    #: ``BEHAVIORAL`` in the PII registry (G5 — employee-monitoring guard). ``False``
+    #: (default, minimal) suppresses those values so the audit trail can't become a
+    #: continuous value-level monitoring record of staff without an explicit
+    #: decision (§26 BDSG / Art. 88); the row still records *that* the field
+    #: changed. ``True`` keeps the diffs. Framework default fields aren't
+    #: ``BEHAVIORAL`` — this bites only fields an app classifies as such.
+    audit_behavioral_detail: bool = False
 
     tenant_resolution: TenantResolution = "header"
     tenant_header_name: str = "X-Tenant-Slug"
@@ -229,12 +278,17 @@ class CoreAdminConfig:
 
     security_headers_enabled: bool = True
     #: Optional ``Content-Security-Policy`` header value (Review R14). ``None``
-    #: (default) emits no CSP — the **bundled** admin UI uses inline
-    #: ``<script>`` config blocks that a strict ``script-src 'self'`` would
-    #: block. Apps driving the framework via the API/contract with their own
-    #: frontend SHOULD set a strict policy here, e.g.
-    #: ``"default-src 'self'; frame-ancestors 'none'"``. Emitted only when
-    #: ``security_headers_enabled`` is True.
+    #: (default) emits no CSP. Emitted only when ``security_headers_enabled``.
+    #:
+    #: **With the bundled UI (G10):** include the literal token ``{nonce}`` in
+    #: your ``script-src`` and the framework mints a fresh per-request nonce,
+    #: substitutes it into the header, and stamps the UI's inline ``<script>``
+    #: blocks with a matching nonce — so a strict policy covers the bundled UI's
+    #: own scripts while still blocking injected ones. Recommended:
+    #: ``"default-src 'self'; script-src 'self' 'nonce-{nonce}'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"``
+    #:
+    #: **API-first (no bundled UI):** any strict static policy works, e.g.
+    #: ``"default-src 'self'; frame-ancestors 'none'"`` (no ``{nonce}`` needed).
     content_security_policy: str | None = None
     #: Number of trusted reverse-proxy hops in front of the app (Review R16).
     #: ``0`` (default) → the real client IP is the direct peer
@@ -311,6 +365,14 @@ class CoreAdminConfig:
                 "ASTERION_PASSWORD_RESET_TOKEN_EXPIRE_MINUTES",
                 30,
             ),
+            password_reset_rate_limit_max=_env_int(
+                "ASTERION_PASSWORD_RESET_RATE_LIMIT_MAX",
+                5,
+            ),
+            password_reset_rate_limit_window_seconds=_env_int(
+                "ASTERION_PASSWORD_RESET_RATE_LIMIT_WINDOW_SECONDS",
+                15 * 60,
+            ),
             invite_token_expire_minutes=_env_int(
                 "ASTERION_INVITE_TOKEN_EXPIRE_MINUTES",
                 60 * 24 * 7,
@@ -335,6 +397,18 @@ class CoreAdminConfig:
                 "ASTERION_ENABLE_IMPERSONATION",
                 True,
             ),
+            impersonation_require_reason=_env_bool(
+                "ASTERION_IMPERSONATION_REQUIRE_REASON",
+                True,
+            ),
+            audit_retention_days=_env_int("ASTERION_AUDIT_RETENTION_DAYS", 90),
+            user_anonymize_after_days=_env_optional_int("ASTERION_USER_ANONYMIZE_AFTER_DAYS"),
+            audit_pii_mode=_env_literal(
+                "ASTERION_AUDIT_PII_MODE",
+                "redact",
+                get_args(AuditPIIMode),
+            ),
+            audit_behavioral_detail=_env_bool("ASTERION_AUDIT_BEHAVIORAL_DETAIL", False),
             tenant_resolution=_env_literal(
                 "ASTERION_TENANT_RESOLUTION",
                 "header",
@@ -446,6 +520,10 @@ class CoreAdminConfig:
             raise ValueError("refresh_token_expire_minutes must be greater than 0")
         if self.password_reset_token_expire_minutes <= 0:
             raise ValueError("password_reset_token_expire_minutes must be greater than 0")
+        if self.password_reset_rate_limit_max <= 0:
+            raise ValueError("password_reset_rate_limit_max must be greater than 0")
+        if self.password_reset_rate_limit_window_seconds <= 0:
+            raise ValueError("password_reset_rate_limit_window_seconds must be greater than 0")
         if self.invite_token_expire_minutes <= 0:
             raise ValueError("invite_token_expire_minutes must be greater than 0")
         if self.password_min_length < 8:
@@ -521,6 +599,15 @@ class CoreAdminConfig:
             raise ValueError(
                 f"user_mode must be one of {get_args(UserMode)}, got {self.user_mode!r}"
             )
+        if self.audit_pii_mode not in get_args(AuditPIIMode):
+            raise ValueError(
+                f"audit_pii_mode must be one of {get_args(AuditPIIMode)}, "
+                f"got {self.audit_pii_mode!r}"
+            )
+        if self.audit_retention_days <= 0:
+            raise ValueError("audit_retention_days must be greater than 0")
+        if self.user_anonymize_after_days is not None and self.user_anonymize_after_days <= 0:
+            raise ValueError("user_anonymize_after_days must be greater than 0 when set")
         if self.storage_max_upload_bytes <= 0:
             raise ValueError("storage_max_upload_bytes must be > 0")
 
@@ -559,12 +646,21 @@ class CoreAdminConfig:
             "access_token_expire_minutes": self.access_token_expire_minutes,
             "refresh_token_expire_minutes": self.refresh_token_expire_minutes,
             "password_reset_token_expire_minutes": self.password_reset_token_expire_minutes,
+            "password_reset_rate_limit_max": self.password_reset_rate_limit_max,
+            "password_reset_rate_limit_window_seconds": (
+                self.password_reset_rate_limit_window_seconds
+            ),
             "invite_token_expire_minutes": self.invite_token_expire_minutes,
             "password_min_length": self.password_min_length,
             "enable_builtin_ui": self.enable_builtin_ui,
             "enable_builtin_admins": self.enable_builtin_admins,
             "enable_multi_tenant": self.enable_multi_tenant,
             "enable_impersonation": self.enable_impersonation,
+            "impersonation_require_reason": self.impersonation_require_reason,
+            "audit_retention_days": self.audit_retention_days,
+            "user_anonymize_after_days": self.user_anonymize_after_days,
+            "audit_pii_mode": self.audit_pii_mode,
+            "audit_behavioral_detail": self.audit_behavioral_detail,
             "tenant_resolution": self.tenant_resolution,
             "tenant_header_name": self.tenant_header_name,
             "default_language": self.default_language,

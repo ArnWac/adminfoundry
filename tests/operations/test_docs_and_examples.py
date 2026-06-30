@@ -33,6 +33,17 @@ DOCS_DIR = PROJECT_ROOT / "docs"
         "tenancy.md",
         "model-admin.md",
         "deployment.md",
+        # G4 — privacy / data-protection doc set.
+        "PRIVACY.md",
+        "DATA_RETENTION.md",
+        "AUDIT_LOGGING.md",
+        "DATA_PROCESSING.md",
+        # G11 — governance doc set.
+        "GOVERNANCE.md",
+        "THREAT_MODEL.md",
+        "permission-matrix.md",
+        "shared-responsibility.md",
+        "adr/README.md",
     ],
 )
 def test_required_doc_exists(filename):

@@ -16,6 +16,158 @@ shape change bumps `CONTRACT_VERSION`.
 
 ## [Unreleased]
 
+## [0.1.41] - 2026-06-30
+
+Second wave of the roadmap's privacy G-block — DSGVO data-subject erasure and
+audit data-minimisation — plus reset-endpoint throttling and complete audit
+retention. Builds on the 0.1.40 G1 PII-classification foundation. No breaking
+API changes.
+
+### Added
+- **User anonymisation (G2, DSGVO Art. 17).** New `asterion/privacy/anonymizer.py`
+  (`anonymize_user`, `anonymize_audit_actor`): stage-2 of the user lifecycle
+  *irreversibly* tombstones PII on the `users` row (email → unroutable
+  `anonymized-<id>@anonymized.invalid`, name/2FA cleared, password replaced with
+  an unknowable hash, deactivated + token bumped) and nulls the actor PII
+  (`actor_label`, `ip_address`) left in the audit log. The row survives, so
+  audit / foreign-key integrity holds — unlike a hard delete. Exposed as
+  `DELETE {root}/users/{id}` (superadmin-only, rejects impersonation tokens,
+  cannot self-anonymise) and `asterion user anonymize`. Stage 1 (reversible
+  `user disable`) is unchanged.
+- **PII-aware audit redaction (G7).** The audit writer now masks the *values* of
+  PII-classified fields in the `changes` diff (on top of the existing secret
+  stripping), driven by the G1 registry. New `CoreAdminConfig.audit_pii_mode`
+  (`"redact"` default / `"hash"` / `"keep"`); masks `IDENTITY` / `CONTACT` /
+  `SENSITIVE` fields. **Behaviour change:** audit `changes` for fields like
+  `email` / `full_name` are now `***PII***` by default instead of the raw value
+  (data minimisation, Art. 5). `actor_label` (the audit's WHO column) is
+  unaffected.
+- **Behavioural-detail guard (G5, employee monitoring).** New
+  `CoreAdminConfig.audit_behavioral_detail` (default `False`): the *values* of
+  fields an app classifies as `BEHAVIORAL` (e.g. time-punch edits) are suppressed
+  in the audit `changes` diff (`***BEHAVIORAL***`) unless explicitly enabled, so
+  the audit trail can't silently become a continuous value-level monitoring
+  record of staff (§26 BDSG / Art. 88). The row still records *that* the field
+  changed. Disjoint from G7 — `BEHAVIORAL` is never touched by the PII pass — so
+  the opt-in is meaningful. No effect on framework-default fields (none are
+  `BEHAVIORAL`).
+- **Complete audit retention (G3).** New `asterion/privacy/retention.py`
+  (`apply_retention`) prunes the public `audit_logs` **and** every tenant
+  schema's `tenant_audit_logs` (by switching `search_path` per tenant on
+  PostgreSQL). New `CoreAdminConfig.audit_retention_days` (default `90`).
+  `asterion audit prune` gains `--all-tenants` and defaults `--days` to the
+  config value.
+- **Retention-based auto-anonymisation (G2/G3 sperrfrist).** New
+  `users.deactivated_at` column (**migration `0007_user_deactivated_at`** — run
+  `db upgrade-public`) records when an account was deactivated; `user disable`
+  stamps it, `user enable` clears it. New `CoreAdminConfig.user_anonymize_after_days`
+  (default `None` = manual only): when set, the new `asterion privacy retention-run`
+  command anonymises users deactivated longer ago than that (idempotent — the
+  tombstone email excludes already-anonymised rows) in addition to pruning audit
+  logs. Set the period only above any legal minimum-retention duration.
+- **Tenant offboarding (G6, AVV return + erasure).** New
+  `asterion/tenancy/offboarding.py` (`export_tenant`, `offboard_tenant`) closes
+  the contract-end lifecycle that `tenant disable` (flag-only) left open: it
+  builds a JSON export bundle (public metadata + memberships and, on PostgreSQL,
+  a full dump of every table in the tenant schema — the "Rückgabe"), deletes the
+  tenant's public rows (memberships, audit, impersonation logs, saved filters),
+  and runs `DROP SCHEMA … CASCADE` (PostgreSQL; one transaction with the cleanup
+  — DDL is transactional). `mode="archive"` keeps a tombstone `Tenant` row
+  (`is_active=False` + new `offboarded_at` column, **migration
+  `0008_tenant_offboarded_at`** — run `db upgrade-public`) so the slug stays
+  reserved; `mode="drop"` deletes it. Exposed as `POST {root}/tenants/{id}/offboard`
+  (superadmin-only; bundle not returned over HTTP) and `asterion tenant offboard`
+  / `tenant export` (`--out` persists the bundle). Writes a PII-free
+  `tenant_offboard` audit row.
+- **Data-subject rights (G8, DSGVO Art. 15/16/17/18/20).** New
+  `asterion/privacy/export.py`: `export_subject(db, user_id)` assembles a JSON
+  bundle of everything asterion holds about one user across the public/global
+  tables (the `users` row minus secrets, memberships, audit actions,
+  impersonation rows, saved filters, DSAR history) — the right of access /
+  portability. Scope is **public-only — never a foreign tenant's schema**. New
+  `data_subject_requests` DSAR register (**migration `0009_data_subject_requests`**
+  — run `db upgrade-public`) with `record_subject_request` /
+  `list_subject_requests` for who/what/when/result accountability (Art. 5(2)).
+  Exposed as `GET {root}/users/{id}/export` (auto-logs a completed `access` DSAR
+  row + a `subject_export` audit row), `GET|POST {root}/users/{id}/dsar`, and
+  `asterion privacy export-subject <id> --out`. Rectification runs through normal
+  CRUD; restriction = `user disable` + a logged `restriction` entry; erasure is
+  the existing `DELETE /users/{id}` anonymisation.
+
+### Documentation
+- **Privacy & governance doc set (G4 + G11).** New `docs/PRIVACY.md` (PII
+  inventory + erasure/access workflow + employee-data section),
+  `docs/DATA_RETENTION.md` (defaults, cron, the backups-vs-erasure caveat),
+  `docs/AUDIT_LOGGING.md` (what's logged + the sanitize→PII→behavioural pipeline +
+  tamper-evidence limitation), `docs/DATA_PROCESSING.md` (sub-processors + data
+  flows + Art. 32 TOMs template), `docs/GOVERNANCE.md`, `docs/THREAT_MODEL.md`
+  (STRIDE-light), `docs/permission-matrix.md`, `docs/shared-responsibility.md`,
+  and `docs/adr/` (ADR-0001 schema-per-tenant, ADR-0002 privacy-as-core,
+  ADR-0003 bearer-tokens). `security.md` refreshed (per-`jti` revocation,
+  reset/2FA throttles, the new audit pipeline, honest tamper/backup limitations);
+  `feature-index.md` + `CLAUDE.md` link the new set.
+
+### Security
+- **CSP nonce hardening for the bundled UI (G10).** `SecurityHeadersMiddleware`
+  now recognises a `{nonce}` token in `content_security_policy`: it mints a fresh
+  per-request nonce, substitutes it into the `Content-Security-Policy` header, and
+  stamps the bundled UI's inline `<script>` config blocks (`app`/`login`/
+  `login_complete.html`) with a matching `nonce=…`. A strict
+  `script-src 'self' 'nonce-{nonce}'` now covers the bundled UI's own scripts
+  while blocking injected inline script — closing the `localStorage`-token XSS gap
+  without `'unsafe-inline'`. No `{nonce}` → behaviour unchanged (verbatim policy);
+  the startup warning about the UI + CSP now fires only when no nonce mechanism is
+  present. Completes review item R14.
+- **Password-reset request throttling.** `POST {auth}/password-reset/request`
+  is now rate-limited per email (separate counter from login) via new
+  `CoreAdminConfig.password_reset_rate_limit_max` /
+  `password_reset_rate_limit_window_seconds`. Caps email-bombing / token-gen
+  abuse; every request is counted (existent or not) and the endpoint still
+  returns 202 on the normal path, so the throttle reveals no account existence.
+  (The 2FA `/2fa/login` endpoint was already throttled.)
+
+## [0.1.40] - 2026-06-30
+
+Governance / privacy / security hardening (first wave of the roadmap's
+G-block) plus two internal refactors. No breaking API changes.
+
+### Security
+- **bcrypt 72-byte truncation fixed (review K5).** `hash_password` now
+  SHA-256-pre-hashes the password before bcrypt, so long passphrases keep
+  their full entropy instead of being silently capped at 72 bytes (the
+  installed bcrypt now *raises* past 72 bytes — long passwords would have
+  errored). `verify_password` stays backward-compatible: it falls back to the
+  legacy raw-bcrypt scheme so existing hashes keep verifying. No re-hash or
+  migration required.
+- **Impersonation now requires a documented reason (G9).** New
+  `CoreAdminConfig.impersonation_require_reason` (default `True`): a
+  `POST {root}/impersonate` without a `reason` is rejected (422); the reason is
+  persisted on `ImpersonationLog.reason` and mirrored into the audit `changes`,
+  so cross-user support access always carries a purpose. Set the flag `False`
+  for the pre-G9 (optional-reason) behaviour. **Migration:**
+  `0006_impersonation_reason` adds the nullable `impersonation_logs.reason`
+  column — run `db upgrade-public`.
+- **Tenant-scoped write guard (review K3).** New
+  `asterion.tenancy.guard.assert_tenant_search_path` refuses a tenant-scoped
+  write when PostgreSQL `search_path` still points at `public` (defence in depth
+  against a forgotten `SET search_path`). Wired into the tenant-scoped audit
+  writer; a misconfigured write is skipped rather than landing in the wrong
+  schema. No-op on SQLite.
+
+### Added
+- **PII classification registry (G1 foundation).** New core module
+  `asterion.privacy` with `PIICategory` and a `PIIFieldRegistry` (modelled on
+  `ProtectedFieldRegistry`: singleton, `freeze()`, `register`). Seeds the
+  framework's own personal-data fields (`email`, `full_name`, audit
+  `actor_label` / `ip_address`). Foundation only — no consumer yet; the
+  anonymiser (G2), retention (G3) and PII-aware audit redaction (G7) build on it.
+
+### Changed (internal, no behaviour change)
+- `auth/tokens.py`: collapsed the three UUID-claim accessors into one
+  `_uuid_claim` helper and the refresh/MFA decoders into one `_decode_typed`.
+- `crud/query.py`: primary-key and filter string→type coercion now share one
+  `_coerce_str_to_column_type` helper (identical 422 messages preserved).
+
 ## [0.1.39] - 2026-06-27
 
 ### Removed

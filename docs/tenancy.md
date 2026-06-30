@@ -147,6 +147,48 @@ asterion tenant bootstrap acme
 Steps 4–6 are idempotent; steps 2–3 use `IF NOT EXISTS` / Alembic versioning, so
 re-running `bootstrap` is always safe.
 
+## Offboarding a tenant
+
+`tenant disable` only flips `is_active=False` (reversible). At **contract end** an
+AVV / DPA obligation requires returning *and* erasing the tenant's data — the
+full lifecycle, provided by `asterion/tenancy/offboarding.py`:
+
+```bash
+# Non-destructive snapshot (the "Rückgabe" half) — safe to run any time.
+asterion tenant export acme --out acme-export.json
+
+# Full offboard: export → public cleanup → DROP SCHEMA … CASCADE.
+asterion tenant offboard acme --mode drop --out acme-export.json
+```
+
+`offboard_tenant()` runs, in order:
+
+1. **Export** a JSON bundle: public `tenant` metadata + `memberships`, and — on
+   PostgreSQL — a complete dump of every table in `tenant_acme`. (On SQLite there
+   is no per-tenant schema to dump, so the bundle reports `schema: null` with a
+   note. See the [SQLite caveat](#sqlite-caveat).)
+2. **Cleanup** the public rows that carry the tenant's id: `tenant_memberships`,
+   `audit_logs`, `impersonation_logs`, and `admin_saved_filters`.
+3. **Drop** the schema with `DROP SCHEMA "tenant_acme" CASCADE` (PostgreSQL).
+   Steps 2–3 run in **one transaction** (DDL is transactional in PostgreSQL), so
+   a failure leaves the tenant fully intact.
+4. **Audit** the operation to the public log (`tenant_offboard`) with a PII-free
+   summary (slug, schema, mode, deleted-row counts — never tenant data).
+
+Two modes differ only in the `Tenant` row:
+
+| Mode | `Tenant` row | Follow-up request to the slug |
+|---|---|---|
+| `archive` (default) | kept as a tombstone (`is_active=False` + `offboarded_at`) | `403` (disabled) — slug stays reserved |
+| `drop` | deleted | `404` (not found) — slug freed for reuse |
+
+Superadmins can trigger the same flow over HTTP via
+`POST /api/v1/root/tenants/{id}/offboard` (`{"mode": "archive"|"drop"}`); the
+export bundle is **not** returned in the response (it can be large and contains
+tenant data) — use the CLI's `--out` to persist it. The flow is idempotent: a
+`drop`-ed slug is simply not found on a second run, and `DROP SCHEMA IF EXISTS`
+/ empty deletes make a re-run over an `archive`-d tenant a no-op.
+
 ## Member management
 
 Once a tenant exists, its own operators onboard further admin users — no

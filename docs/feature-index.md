@@ -70,6 +70,7 @@ can_update_object / can_delete_object / field_permission`. `FieldPermission`:
 | `get_async_session` | Sets `SET LOCAL search_path` per txn. | `SET LOCAL` evaporates on commit — no leak across pooled conns. |
 | Tenant resolver | `tenant_resolution="header"` (default) or `"subdomain"`. | Caches slug→context 30s in-process. |
 | Provisioning | `tenant create` → `db upgrade-tenant` → `bootstrap`. | Bootstrap is idempotent; seeds owner/admin/viewer roles. |
+| Offboarding (G6) | `tenant export` / `tenant offboard` → bundle + public cleanup + `DROP SCHEMA CASCADE`. | `archive` keeps a tombstone row (slug → `403`); `drop` deletes it (slug → `404`). Schema dump is PostgreSQL-only. |
 | Member mgmt | `/_members` CRUD, tenant-scoped. | Foreign `membership_id` → `404` (never `403`); DELETE keeps the global User. |
 | Invites | Unknown email → inactive passwordless User + invite token. | Completed via `password-reset/confirm`; default notifier logs token (dev only). |
 
@@ -90,14 +91,29 @@ can_update_object / can_delete_object / field_permission`. `FieldPermission`:
 | Feature | One-liner | Gotcha |
 |---|---|---|
 | JWT tokens | `access` + `impersonation` types. | Impersonation tokens rejected at superadmin routes. |
-| Revocation | Bump `User.token_version` (logout-all) or `is_active=False`. | Clearing `is_superadmin` doesn't kill an issued JWT. |
+| Revocation | `token_version` (logout-all) + per-`jti` `RevokedToken` (single session). | Both checked every request; clearing `is_superadmin` doesn't kill an issued JWT. |
 | Permission keys | `admin.<resource>.<action>`, trailing-`*` only. | Middle wildcard (`admin.*.list`) rejected on parse. |
 | Single-tenant scope | No tenant → superadmin required by default. | `single_tenant_require_superadmin=False` to open it. |
+| Rate limiting | Login + password-reset (per email) + 2FA-login (per user). | In-memory default per-process; wire Redis backend for multi-worker. |
 | Input validation | `validate_*` on every external identifier. | Pagination bounded `[1,500]`. |
 | Field protection | Per-admin + global `ProtectedFieldRegistry`. | One `strictest` rule; policy only tightens. |
 | Secret sanitization | `sanitize_payload` redacts secret-ish keys in audit/logs. | Word-boundary match: `access_token` redacted, `tokens` not. |
-| Audit | One row per login/CRUD-write/action/impersonation. | No auto-retention; schedule a `DELETE`. |
+| Audit | One row per login/CRUD-write/action/impersonation. | Retention via `privacy retention-run`; rows not tamper-evident (G16). |
 | Proxy / client IP | Ignores `X-Forwarded-For` by default. | Set `trusted_proxy_count` + `--proxy-headers`; never above real hop count. |
+| Security headers / CSP | Baseline headers always; CSP opt-in. | Put `{nonce}` in `script-src` for the bundled UI (G10); off by default. |
+
+## Privacy & governance — [PRIVACY.md](PRIVACY.md)
+
+| Feature | One-liner | Gotcha |
+|---|---|---|
+| PII classification | `PIIFieldRegistry` (G1), category per field name. | Register before `create_admin` freezes it; framework PII pre-seeded. |
+| User anonymisation | Two-stage: disable → anonymise (G2). | Tombstones row, keeps it (FK/audit integrity); not a hard delete. |
+| Audit PII redaction | `email`/`name` masked `***PII***` by default (G7, `audit_pii_mode`). | `actor_label` (WHO column) is NOT masked — only nulled on anonymisation. |
+| Behavioural guard | `BEHAVIORAL` field values suppressed in audit (G5). | Off for framework defaults; bites only app-classified fields. `audit_behavioral_detail` to keep. |
+| Retention | `audit_retention_days` (90); `audit prune` / `privacy retention-run`. | Auto-anonymise needs `user_anonymize_after_days`; erasure doesn't reach backups (G22). |
+| Subject export + DSAR (G8) | `export_subject` / `GET …/users/{id}/export`; `data_subject_requests` log. | Public scope only — no foreign-tenant data; secrets dropped; export auto-logs an `access` DSAR row. |
+| Impersonation reason | Required by default (G9). | `impersonation_require_reason=False` to relax. |
+| Docs | [DATA_RETENTION](DATA_RETENTION.md) · [AUDIT_LOGGING](AUDIT_LOGGING.md) · [DATA_PROCESSING](DATA_PROCESSING.md) · [GOVERNANCE](GOVERNANCE.md) · [THREAT_MODEL](THREAT_MODEL.md) · [permission-matrix](permission-matrix.md) · [shared-responsibility](shared-responsibility.md) · [ADRs](adr/README.md) | The docs are the source of truth. |
 
 ## Extensions — [extensions.md](extensions.md)
 

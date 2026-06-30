@@ -15,15 +15,31 @@ root concern the provider protocol intentionally doesn't cover
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from asterion.audit import (
+    SUBJECT_EXPORT,
+    SUBJECT_REQUEST_LOG,
+    USER_ANONYMIZE,
+    record_audit_in_session,
+    request_audit_kwargs,
+)
 from asterion.auth.dependencies import require_superadmin
 from asterion.db.dependencies import get_async_session
 from asterion.models.user import User
+from asterion.privacy.anonymizer import anonymize_audit_actor, anonymize_user
+from asterion.privacy.export import (
+    SubjectNotFoundError,
+    SubjectRequestType,
+    export_subject,
+    list_subject_requests,
+    record_subject_request,
+)
 from asterion.providers.base import AdminPrincipal, UserQuery
 
 router = APIRouter()
@@ -62,6 +78,13 @@ class UserListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class AnonymizeResponse(BaseModel):
+    id: str
+    anonymized: bool = True
+    #: How many public audit rows had the user's actor PII redacted.
+    audit_rows_redacted: int
 
 
 @router.get("/users", response_model=UserListResponse)
@@ -105,3 +128,161 @@ async def read_user(
             detail="User not found.",
         )
     return UserOut.from_orm_user(user)
+
+
+@router.delete("/users/{user_id}", response_model=AnonymizeResponse)
+async def anonymize_user_endpoint(
+    user_id: uuid.UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    current: User = Depends(require_superadmin),
+) -> AnonymizeResponse:
+    """Irreversibly anonymise a user (DSGVO Art. 17) — **not** a hard delete.
+
+    PII on the ``users`` row and the user's public audit-actor fields
+    (``actor_label`` e-mail, ``ip_address``) are tombstoned; the rows themselves
+    survive so foreign-key / audit integrity holds. For the reversible stage-1
+    deactivation use the ``user disable`` CLI command instead.
+
+    Superadmin-only (``require_superadmin`` rejects impersonation tokens). A
+    superadmin cannot anonymise their own account.
+    """
+    user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found.",
+        )
+    if user.id == current.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You cannot anonymise your own account.",
+        )
+
+    anonymize_user(user)
+    redacted = await anonymize_audit_actor(session, user_id)
+    await session.flush()
+
+    await record_audit_in_session(
+        session,
+        action=USER_ANONYMIZE,
+        actor=current,
+        resource="users",
+        record_id=user_id,
+        changes={"user_id": str(user_id), "audit_rows_redacted": redacted},
+        **request_audit_kwargs(request, status_code=200),
+    )
+    return AnonymizeResponse(id=str(user_id), audit_rows_redacted=redacted)
+
+
+# ---------------------------------------------------------------------------
+# Data-subject rights (G8, DSGVO Art. 15/16/17/18/20)
+# ---------------------------------------------------------------------------
+
+
+class SubjectRequestIn(BaseModel):
+    request_type: SubjectRequestType
+    status: str = "received"
+    note: str | None = None
+
+
+@router.get("/users/{user_id}/export")
+async def export_user_data(
+    user_id: uuid.UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    current: User = Depends(require_superadmin),
+) -> dict[str, Any]:
+    """Export everything asterion holds about a user (Art. 15/20).
+
+    Returns a JSON bundle of the user's public/global data (their ``users`` row
+    minus secrets, memberships, audit actions, impersonation rows, saved filters,
+    and DSAR history). Tenant-local business data is out of scope to preserve
+    tenant isolation. The export itself is logged: a ``subject_export`` audit row
+    **and** a completed ``access`` DSAR entry, so fulfilling the right of access
+    is itself accountable.
+    """
+    runtime = request.app.state.asterion
+    try:
+        bundle = await export_subject(runtime.db, user_id)
+    except SubjectNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found."
+        ) from exc
+
+    await record_subject_request(
+        runtime.db,
+        subject_user_id=user_id,
+        request_type="access",
+        status="completed",
+        handled_by_user_id=current.id,
+        note="Data export generated via root API.",
+    )
+    await record_audit_in_session(
+        session,
+        action=SUBJECT_EXPORT,
+        actor=current,
+        resource="users",
+        record_id=user_id,
+        changes={"subject_user_id": str(user_id)},
+        **request_audit_kwargs(request, status_code=200),
+    )
+    return bundle
+
+
+@router.get("/users/{user_id}/dsar")
+async def list_user_dsar(
+    user_id: uuid.UUID,
+    request: Request,
+    _current: User = Depends(require_superadmin),
+) -> list[dict[str, Any]]:
+    """List the DSAR log for a data subject (the accountability register)."""
+    runtime = request.app.state.asterion
+    return await list_subject_requests(runtime.db, user_id)
+
+
+@router.post("/users/{user_id}/dsar", status_code=status.HTTP_201_CREATED)
+async def create_user_dsar(
+    user_id: uuid.UUID,
+    payload: SubjectRequestIn,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+    current: User = Depends(require_superadmin),
+) -> dict[str, Any]:
+    """Record a data-subject request (Art. 16/17/18 tracking).
+
+    For *erasure* this logs the request — the actual anonymisation is the
+    separate ``DELETE /users/{id}`` (Art. 17); for *restriction* the operator
+    pairs this entry with ``user disable`` (the documented marker). Validation of
+    ``request_type`` / ``status`` happens in the service layer.
+    """
+    user_exists = (
+        await session.execute(select(User.id).where(User.id == user_id))
+    ).scalar_one_or_none()
+    if user_exists is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+
+    try:
+        row = await record_subject_request(
+            request.app.state.asterion.db,
+            subject_user_id=user_id,
+            request_type=payload.request_type,
+            status=payload.status,  # type: ignore[arg-type]
+            handled_by_user_id=current.id,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    await record_audit_in_session(
+        session,
+        action=SUBJECT_REQUEST_LOG,
+        actor=current,
+        resource="users",
+        record_id=user_id,
+        changes={"subject_user_id": str(user_id), "request_type": payload.request_type},
+        **request_audit_kwargs(request, status_code=201),
+    )
+    return row

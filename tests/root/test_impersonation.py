@@ -38,6 +38,11 @@ def app_state(tmp_path):
             enable_multi_tenant=False,
             enable_builtin_ui=False,
             enable_builtin_admins=False,
+            # These tests exercise auth / token type / tenant resolution, not
+            # the G9 reason gate — keep the reason optional here. The reason
+            # enforcement + persistence has dedicated coverage in
+            # test_impersonation_reason.py.
+            impersonation_require_reason=False,
         )
     )
     runtime = application.state.asterion

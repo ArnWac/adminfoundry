@@ -186,6 +186,17 @@ def test_user_disable_marks_inactive_and_bumps_token_version(env):
     user = _read_user(env, "alice@example.com")
     assert user.is_active is False
     assert user.token_version == 6  # bumped so existing tokens fail
+    assert user.deactivated_at is not None  # G2 retention clock started
+
+
+def test_user_enable_clears_deactivated_at(env):
+    _seed_user(env, email="alice@example.com", is_active=True)
+    _runner().invoke(cli_app, ["user", "disable", "--email", "alice@example.com"])
+    assert _read_user(env, "alice@example.com").deactivated_at is not None
+
+    result = _runner().invoke(cli_app, ["user", "enable", "--email", "alice@example.com"])
+    assert result.exit_code == 0
+    assert _read_user(env, "alice@example.com").deactivated_at is None
 
 
 def test_user_disable_idempotent(env):
@@ -215,3 +226,68 @@ def test_user_disable_unknown_email(env):
 def test_user_enable_unknown_email(env):
     result = _runner().invoke(cli_app, ["user", "enable", "--email", "ghost@example.com"])
     assert result.exit_code != 0
+
+
+# --- anonymize (G2) ---
+
+
+def _seed_audit_actor(url: str, actor_id, email: str):
+    from asterion.models.audit_log import AuditLog
+
+    async def _go():
+        engine = _engine_for(url)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with factory() as session:
+            async with session.begin():
+                session.add(
+                    AuditLog(
+                        method="POST",
+                        path="/login",
+                        status_code=200,
+                        action="login_success",
+                        actor_user_id=actor_id,
+                        actor_label=email,
+                        ip_address="203.0.113.5",
+                    )
+                )
+        await engine.dispose()
+
+    asyncio.run(_go())
+
+
+def test_user_anonymize_tombstones_pii(env):
+    user = _seed_user(env, email="alice@example.com", full_name="Alice", token_version=2)
+    _seed_audit_actor(env, user.id, "alice@example.com")
+
+    result = _runner().invoke(
+        cli_app, ["user", "anonymize", "--email", "alice@example.com", "--yes"]
+    )
+    assert result.exit_code == 0, result.output
+
+    # The original email is gone — read the tombstoned row by id.
+    from asterion.privacy.anonymizer import anonymized_email
+
+    fresh = _read_user(env, anonymized_email(user.id))
+    assert fresh is not None
+    assert fresh.full_name is None
+    assert fresh.is_active is False
+    assert fresh.token_version == 3
+    assert verify_password("hunter2-strong", fresh.hashed_password) is False
+    assert _read_user(env, "alice@example.com") is None
+
+
+def test_user_anonymize_unknown_email(env):
+    result = _runner().invoke(
+        cli_app, ["user", "anonymize", "--email", "ghost@example.com", "--yes"]
+    )
+    assert result.exit_code != 0
+
+
+def test_user_anonymize_aborts_without_confirmation(env):
+    _seed_user(env, email="alice@example.com")
+    result = _runner().invoke(
+        cli_app, ["user", "anonymize", "--email", "alice@example.com"], input="n\n"
+    )
+    assert "Aborted" in result.output
+    # Still present + unchanged.
+    assert _read_user(env, "alice@example.com") is not None
