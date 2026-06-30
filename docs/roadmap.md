@@ -72,7 +72,7 @@ bereits abgedeckt (R1–R17); die hier gelisteten Punkte schließen die
 | **Sollte** | G19 | Per-Tenant Rate-Limiting / Quotas (Noisy-Neighbor) | mittel | ✅ erledigt |
 | **Sollte** | G20 | Observability: OpenTelemetry-Tracing + Metriken (Core, optional) | mittel | ✅ erledigt |
 | **Sollte** | G21 | Passwort-Policy nach NIST 800-63B (inkl. Breach-Check) | klein | ✅ erledigt |
-| **Kann** | G23 | WebAuthn/Passkey-Authentifizierung (Extension, phishing-resistent) | groß | geplant |
+| **Kann** | G23 | WebAuthn/Passkey-Authentifizierung (Extension, phishing-resistent) | groß | geplant · **niedrige Prio** |
 | **Später** | G14 | Globale RBAC / Support-Rollen | groß | geplant (Design s. u.) |
 | **Später** | G15 | PostgreSQL Row Level Security als Defense-in-Depth | groß | zu entscheiden (ADR) |
 | **Später** | G16 | Audit-Tamper-Evidence (Hash-Chain / WORM / Legal Hold) | groß | geplant |
@@ -452,6 +452,12 @@ bereits abgedeckt (R1–R17); die hier gelisteten Punkte schließen die
 ---
 
 ## Stufe 3 — Später / Enterprise
+
+> **Priorität: niedrig.** Diese Punkte (G14–G18, G22, G23) sind **bewusst nicht
+> eingeplant** und werden **nur bei konkretem Kundenbedarf** angefasst — jeweils
+> als eigenes, gescoptes Increment (mehrere davon ADR-pflichtig). Sie sind hier
+> nur **vermerkt**, nicht terminiert. Die „Muss"/„Sollte"-Blöcke (G1–G13, G19–G21)
+> sind abgeschlossen; alles Weitere ist optionaler Enterprise-Ausbau.
 
 ### G14 — Globale RBAC / Support-Rollen
 
