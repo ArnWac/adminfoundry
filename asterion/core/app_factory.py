@@ -141,6 +141,10 @@ def create_admin(
             hibp_check=config.password_hibp_check,
             hibp_timeout=config.password_hibp_timeout_seconds,
         ),
+        tenant_rate_limiter=InMemoryLoginRateLimiter(
+            max_failures=config.tenant_rate_limit_max,
+            window_seconds=config.tenant_rate_limit_window_seconds,
+        ),
     )
 
     # Mirror the explicit ``password_reset_notifier`` into the generic

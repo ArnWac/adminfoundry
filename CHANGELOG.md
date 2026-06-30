@@ -16,6 +16,24 @@ shape change bumps `CONTRACT_VERSION`.
 
 ## [Unreleased]
 
+## [0.1.45] - 2026-06-30
+
+Per-tenant request rate limiting (roadmap G19, noisy-neighbour protection). No
+breaking API changes; off by default.
+
+### Added
+- **Per-tenant request rate limiting (G19).** New
+  `asterion/core/tenant_rate_limit.py` (`TenantRateLimitMiddleware`): counts each
+  tenant-scoped request against a per-tenant sliding-window budget and returns
+  `429` (`rate_limited` envelope) over budget. Keyed by tenant only, so one
+  tenant's traffic can never exhaust another's; requests without a tenant
+  (health, root, login) are not limited here. Reuses the existing
+  `RateLimiterBackend` (`runtime.tenant_rate_limiter`) — swap in the bundled
+  `rate_limit_redis` backend for multi-worker deployments.
+- New config `tenant_rate_limit_enabled` (default **False**), `tenant_rate_limit_max`
+  (1000), `tenant_rate_limit_window_seconds` (60). The middleware is registered
+  only when enabled and self-extracts the tenant slug, so it is order-independent.
+
 ## [0.1.44] - 2026-06-30
 
 Pluggable password policy with opt-in breach check (roadmap G21, NIST SP

@@ -45,6 +45,14 @@ def install_middleware(
 
         app.add_middleware(TenantMiddleware)
 
+    # Per-tenant request rate limiting (G19). Registered only when enabled; the
+    # middleware self-extracts the tenant slug, so it does not depend on the
+    # TenantMiddleware ordering.
+    if config.tenant_rate_limit_enabled:
+        from asterion.core.tenant_rate_limit import TenantRateLimitMiddleware
+
+        app.add_middleware(TenantRateLimitMiddleware)
+
     # CORS only if origins are configured. Validate already rejected the
     # unsafe ``["*"]`` + credentials=True combination.
     if config.cors_origins:
