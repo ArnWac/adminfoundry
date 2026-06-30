@@ -19,6 +19,7 @@ from asterion.contract.router import router as contract_router
 from asterion.core.config import CoreAdminConfig
 from asterion.core.health import router as health_router
 from asterion.core.middleware import (
+    CSP_NONCE_PLACEHOLDER,
     AccessLogMiddleware,
     RequestIDMiddleware,
     SecurityHeadersMiddleware,
@@ -56,15 +57,22 @@ def install_middleware(
         )
 
     if config.security_headers_enabled:
-        if config.content_security_policy and config.enable_builtin_ui:
+        csp = config.content_security_policy
+        # Warn only when the bundled UI is on AND the policy has no nonce
+        # mechanism (G10): the UI's inline <script> config blocks need either a
+        # ``{nonce}`` placeholder or ``'unsafe-inline'``, else the UI won't boot.
+        if csp and config.enable_builtin_ui and CSP_NONCE_PLACEHOLDER not in csp:
             logging.getLogger("asterion").warning(
                 "content_security_policy is set while the bundled admin UI is "
-                "enabled. The bundled UI relies on inline <script> config blocks "
-                "that a strict 'script-src' will block (the UI then fails to "
-                "boot). Ensure the policy permits them (e.g. a nonce/'unsafe-inline') "
-                "or set enable_builtin_ui=False for API-first deployments."
+                "enabled, but it contains no '%s' nonce placeholder. The bundled "
+                "UI relies on inline <script> config blocks that a strict "
+                "'script-src' will block (the UI then fails to boot). Add "
+                "\"'nonce-%s'\" to your script-src, or 'unsafe-inline', or set "
+                "enable_builtin_ui=False for API-first deployments.",
+                CSP_NONCE_PLACEHOLDER,
+                CSP_NONCE_PLACEHOLDER,
             )
-        app.add_middleware(SecurityHeadersMiddleware, csp=config.content_security_policy)
+        app.add_middleware(SecurityHeadersMiddleware, csp=csp)
 
     # Access log sits just inside RequestIDMiddleware so its log records
     # already see request.state.request_id, but it still wraps everything

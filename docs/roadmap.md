@@ -19,9 +19,9 @@ sie um den am 2026-06-24 angeforderten Block
 
 - **Feature-Phasen 1–5** und **Pre-1.0-Härtung P1–P3**: abgeschlossen
   (siehe [Historie](#abgeschlossen-historie)).
-- **Review-Härtung R1–R17**: umgesetzt + gemergt, bis auf **R14** (XSS:
-  CSP/Token-Storage), das als [G10](#g10--xss-härtung-csp--token-storage)
-  weitergeführt wird. R1/R2 (Tenant-Isolation) sind auf echtem PostgreSQL
+- **Review-Härtung R1–R17**: umgesetzt + gemergt. **R14** (XSS: CSP/Token-Storage)
+  ist als [G10](#g10--xss-härtung-csp--token-storage) abgeschlossen (CSP-Nonce für
+  die Bundled-UI, v0.1.41). R1/R2 (Tenant-Isolation) sind auf echtem PostgreSQL
   CI-bestätigt. Kompaktnachweis: [Abgeschlossen — R1–R17](#abgeschlossen--review-härtung-r1r17).
 - **Aktive offene Arbeit**: der Block
   [Governance, Datenschutz & Security](#governance-datenschutz--security-härtung-b2bsaas)
@@ -56,22 +56,23 @@ bereits abgedeckt (R1–R17); die hier gelisteten Punkte schließen die
 
 | Stufe | ID | Thema | Aufwand | Status |
 |---|---|---|---|---|
-| **Muss** | G1 | PII-Klassifizierung (`privacy/classification.py` + Hook) | mittel | geplant |
-| **Muss** | G2 | User-Lebenszyklus: Deaktivierung → Anonymisierung (Art. 17) | mittel | geplant |
-| **Muss** | G3 | Audit-Retention vollständig (inkl. `tenant_audit_logs`) | mittel | geplant |
-| **Muss** | G4 | Datenschutz-Doku-Set (PRIVACY/DATA_RETENTION/AUDIT_LOGGING/DATA_PROCESSING) | mittel | geplant |
-| **Muss** | G5 | Beschäftigtendatenschutz-Defaults (Anti-Mitarbeiterüberwachung) | mittel | geplant |
-| **Sollte** | G6 | Tenant-Offboarding (Export + Schema-Drop + public-Cleanup) | groß | geplant |
-| **Sollte** | G7 | PII-aware Audit-Redaktion | mittel | geplant |
-| **Sollte** | G8 | Betroffenenrechte (Auskunft/Export/Berichtigung/Einschränkung + DSAR-Log) | groß | geplant |
-| **Sollte** | G9 | Impersonation-`reason` + Governance-Trail | klein | geplant |
-| **Sollte** | G10 | XSS-Härtung abschließen (CSP-Nonce / HttpOnly-Cookie) — ex-R14 | mittel | 🟡 teilweise |
-| **Sollte** | G11 | Governance-Doku (GOVERNANCE/THREAT_MODEL/ADRs/Berechtigungsmatrix/Shared-Responsibility) | mittel | geplant |
+| **Muss** | G1 | PII-Klassifizierung (`privacy/classification.py` + Hook) | mittel | ✅ erledigt |
+| **Muss** | G2 | User-Lebenszyklus: Deaktivierung → Anonymisierung (Art. 17) | mittel | ✅ erledigt |
+| **Muss** | G3 | Audit-Retention vollständig (inkl. `tenant_audit_logs`) | mittel | ✅ erledigt |
+| **Muss** | G4 | Datenschutz-Doku-Set (PRIVACY/DATA_RETENTION/AUDIT_LOGGING/DATA_PROCESSING) | mittel | ✅ erledigt |
+| **Muss** | G5 | Beschäftigtendatenschutz-Defaults (Anti-Mitarbeiterüberwachung) | mittel | ✅ erledigt |
+| **Sollte** | G6 | Tenant-Offboarding (Export + Schema-Drop + public-Cleanup) | groß | ✅ erledigt |
+| **Sollte** | G7 | PII-aware Audit-Redaktion | mittel | ✅ erledigt |
+| **Sollte** | G8 | Betroffenenrechte (Auskunft/Export/Berichtigung/Einschränkung + DSAR-Log) | groß | ✅ erledigt |
+| **Sollte** | G9 | Impersonation-`reason` + Governance-Trail | klein | ✅ erledigt |
+| **Sollte** | G10 | XSS-Härtung abschließen (CSP-Nonce / HttpOnly-Cookie) — ex-R14 | mittel | ✅ erledigt |
+| **Sollte** | G11 | Governance-Doku (GOVERNANCE/THREAT_MODEL/ADRs/Berechtigungsmatrix/Shared-Responsibility) | mittel | ✅ erledigt |
 | **Sollte** | G12 | Security-CI-Härtung (Dependency-/Secret-Scan, SBOM, PII-freie Testdaten) | mittel | geplant |
 | **Sollte** | G13 | IDOR-/Tenant-Leak-Testsuite ausbauen | mittel | geplant |
 | **Sollte** | G19 | Per-Tenant Rate-Limiting / Quotas (Noisy-Neighbor) | mittel | geplant |
 | **Sollte** | G20 | Observability: OpenTelemetry-Tracing + Metriken (Core, optional) | mittel | geplant |
 | **Sollte** | G21 | Passwort-Policy nach NIST 800-63B (inkl. Breach-Check) | klein | geplant |
+| **Kann** | G23 | WebAuthn/Passkey-Authentifizierung (Extension, phishing-resistent) | groß | geplant |
 | **Später** | G14 | Globale RBAC / Support-Rollen | groß | geplant (Design s. u.) |
 | **Später** | G15 | PostgreSQL Row Level Security als Defense-in-Depth | groß | zu entscheiden (ADR) |
 | **Später** | G16 | Audit-Tamper-Evidence (Hash-Chain / WORM / Legal Hold) | groß | geplant |
@@ -224,7 +225,13 @@ bereits abgedeckt (R1–R17); die hier gelisteten Punkte schließen die
   [root/tenants.py](../asterion/root/tenants.py); [cli/main.py](../asterion/cli/main.py).
 - **Test (`@pytest.mark.postgres`):** nach Offboard Schema weg, public-Zeilen
   weg, Folge-Request auf den Slug → 404; Export-Bundle vollständig.
-- **Aufwand:** groß. **Status:** geplant.
+- **Aufwand:** groß. **Status:** ✅ erledigt (v0.1.41). Umgesetzt in
+  [tenancy/offboarding.py](../asterion/tenancy/offboarding.py)
+  (`export_tenant` / `offboard_tenant`, Modi `archive` | `drop`), Route
+  `POST /root/tenants/{id}/offboard`, CLI `tenant export` / `tenant offboard`.
+  Neue Spalte `tenants.offboarded_at` (Migration `0008_tenant_offboarded_at`).
+  Tests: `tests/tenancy/test_offboarding_sqlite.py`,
+  `tests/postgres/test_tenant_offboard.py`, plus Route-/CLI-Tests.
 
 ### G7 — PII-aware Audit-Redaktion
 
@@ -251,7 +258,14 @@ bereits abgedeckt (R1–R17); die hier gelisteten Punkte schließen die
   (wer/was/wann/Ergebnis). Versand via vorhandenes `Notifier`/`StorageBackend`.
 - **Betroffene Dateien:** neu `asterion/privacy/export.py`, ggf.
   `asterion/models/data_subject_request.py`; Route unter `root/`.
-- **Aufwand:** groß. **Status:** geplant.
+- **Aufwand:** groß. **Status:** ✅ erledigt (v0.1.41). Umgesetzt in
+  [privacy/export.py](../asterion/privacy/export.py) (`export_subject`,
+  `record_subject_request`, `list_subject_requests`) +
+  [models/data_subject_request.py](../asterion/models/data_subject_request.py)
+  (Migration `0009_data_subject_requests`). Routen `GET /root/users/{id}/export`
+  und `GET|POST /root/users/{id}/dsar`, CLI `privacy export-subject`. Scope:
+  public/global, **kein fremder Tenant**. Tests: `tests/privacy/test_export.py`,
+  Route-/CLI-Tests.
 
 ### G9 — Impersonation-`reason` + Governance-Trail
 
@@ -276,10 +290,20 @@ bereits abgedeckt (R1–R17); die hier gelisteten Punkte schließen die
   `content_security_policy`-Header ([core/middleware.py](../asterion/core/middleware.py),
   Default aus; API-first-Deployments können strikt setzen). Header-Assertion in
   `tests/operations/test_middleware.py`.
-- **Offen:** Nonce-Härtung der Inline-Skripte der Bundled-UI (damit ein striktes
-  `script-src 'self'` greift) **oder** HttpOnly-Cookie-Token-Option (zieht dann
-  eine CSRF-Schicht nach sich — vgl. [Bewusst NICHT umgesetzt](#bewusst-nicht-umgesetzt)).
-- **Aufwand:** mittel. **Status:** 🟡 teilweise.
+- **Umgesetzt (v0.1.41):** Nonce-Härtung der Inline-Skripte der Bundled-UI. Enthält
+  `content_security_policy` den Platzhalter `{nonce}`, mintet
+  [SecurityHeadersMiddleware](../asterion/core/middleware.py) pro Request eine
+  frische Nonce, ersetzt sie im Header und stempelt sie über
+  `request.state.csp_nonce` auf die Inline-`<script>`-Blöcke der drei UI-Templates
+  (`app/login/login_complete.html`). Damit greift ein striktes
+  `script-src 'self' 'nonce-{nonce}'` auch mit gebundelter UI; ohne Platzhalter
+  bleibt das Verhalten unverändert (API-first). Der Installer-Warnhinweis entfällt,
+  sobald `{nonce}` gesetzt ist.
+- **Bewusst nicht umgesetzt:** HttpOnly-Cookie-Token-Option — sie zöge eine
+  CSRF-Schicht nach sich und widerspräche [ADR-0003](adr/0003-bearer-token-not-cookie.md)
+  (Bearer statt Cookie). Nonce-CSP ist der zu ADR-0003 passende Abschluss.
+- **Aufwand:** mittel. **Status:** ✅ erledigt. Tests:
+  `tests/operations/test_middleware.py`, `tests/ui/test_router.py`.
 
 ### G11 — Governance-Doku
 
@@ -450,6 +474,39 @@ bereits abgedeckt (R1–R17); die hier gelisteten Punkte schließen die
 - **Einordnung:** ADR-pflichtig (Key-Management ist heikel; Schlüsselverlust =
   Datenverlust).
 - **Aufwand:** groß. **Status:** zu entscheiden (ADR).
+
+### G23 — WebAuthn / Passkey-Authentifizierung (Extension)
+
+- **Problem:** Erst-Faktor ist Passwort (`hashed_password`), MFA ist TOTP
+  ([models/user.py](../asterion/models/user.py): `totp_secret`/`totp_enabled` +
+  `two_factor_backup_codes`). Beides bleibt phishbar bzw. ein geteiltes Geheimnis;
+  für ein Admin-Panel mit Superadmin-Rechten ist das der größte verbleibende
+  Auth-Hebel — verwandt mit dem XSS-/Token-Diebstahl-Modell aus
+  [G10](#g10--xss-härtung-csp--token-storage).
+- **Risiko:** Phishing / Credential-Stuffing gegen privilegierte Konten; kein
+  origin-gebundener Faktor verfügbar.
+- **Lösung:** Passkeys (WebAuthn/FIDO2) sind **origin-gebunden und phishing-
+  resistent**. Wichtig: **kein Bruch mit [ADR-0003](adr/0003-bearer-token-not-cookie.md)** —
+  WebAuthn beweist nur den Faktor; danach wird **derselbe stateless Bearer-JWT**
+  ausgestellt wie heute. Kein Cookie/CSRF nötig.
+- **Änderung:** Extension `asterion/extensions/auth_passkey` (Muster:
+  `auth_oauth`), gebaut auf der bestehenden Auth-SPI
+  (`AuthProvider`/`UserProvider`) und der 2FA-Infrastruktur. Neue Tabelle
+  `webauthn_credentials` (`credential_id`, `public_key`, `sign_count`, `aaguid`,
+  `user_id`) + kurzlebiger Challenge-Store (Muster: `password_reset_tokens` /
+  OAuth-`state`). Vier Endpunkte (register-begin/complete, auth-begin/complete),
+  UI-JS für `navigator.credentials.{create,get}`. Lib: `py_webauthn`.
+- **Stufen:** (1) Passkey als **zweiter Faktor** (klein, dockt an 2FA an, kein
+  Login-Flow-Umbau); (2) **passwortloser Erst-Faktor** (größer).
+- **Designthema:** **RP-ID bei `enable_multi_tenant`** — bei Subdomain-Resolution
+  (`acme.example.com`) ist der Passkey domain-scoped und gilt nicht für andere
+  Tenant-Subdomains; bei Header-Resolution (Default) entspannt sich das. ADR-würdig.
+- **Betroffene Dateien:** neu `asterion/extensions/auth_passkey/*`, neues Modell
+  + Tenant-/Public-Migration; ggf. kleiner Hook in
+  [auth/router.py](../asterion/auth/router.py) für die Token-Ausgabe.
+- **Abgrenzung:** SCIM/SAML bleiben [Phase 6](#phase-6--enterprise-identity);
+  Passkey ist davon unabhängig und kleiner.
+- **Aufwand:** groß (Stufe 1 mittel). **Status:** geplant (Vorschlag 2026-06-30).
 
 ### Beobachtungsliste — optional, (noch) nicht eingeplant
 
@@ -825,7 +882,7 @@ Commit/Changelog markiert. Ab `1.0` gilt SemVer:
   PostgreSQL **nachweislich** isoliert und im Build gegated. **Bestätigt:**
   CI-Lauf `65391f8` vom 2026-06-18, Job `Test (PostgreSQL integration)` grün.
 - [x] R5 — Changelog/Release-Notes-Prozess etabliert (`CHANGELOG.md`)
-- [ ] **G10** (ex-R14) — XSS-Härtung (CSP-Nonce / Token-Storage) abgeschlossen
+- [x] **G10** (ex-R14) — XSS-Härtung (CSP-Nonce) abgeschlossen (v0.1.41)
 - [ ] mypy aufs Gesamtpaket grün (Follow-up) — *empfohlen, nicht zwingend*
 
 ---
@@ -890,8 +947,8 @@ Explizite Nicht-Ziele, aus den Quelldokumenten kondensiert:
 
 Befunde der externen Reviews (Runde 1 vom 2026-06-16, Runde 2 vom 2026-06-18),
 umgesetzt + gemergt. Detail-Begründungen stehen in Git-Historie und CHANGELOG;
-hier nur Kompaktnachweis. **Einziger Rest:** R14 → fortgeführt als
-[G10](#g10--xss-härtung-csp--token-storage).
+hier nur Kompaktnachweis. **Alle erledigt** — R14 wurde als
+[G10](#g10--xss-härtung-csp--token-storage) abgeschlossen (CSP-Nonce, v0.1.41).
 
 ### Runde 1 (Review 2026-06-16)
 
@@ -915,7 +972,7 @@ hier nur Kompaktnachweis. **Einziger Rest:** R14 → fortgeführt als
 | Prio | ID | Thema | Status |
 |---|---|---|---|
 | P0 | R13 | Roten `test-postgres`-Job geklärt (Test-Override-Annotation) | ✅ erledigt (CI grün) |
-| P1 | R14 | XSS-Härtung: CSP + Token-Storage | 🟡 CSP-Knopf da; Nonce/Cookie offen → [G10](#g10--xss-härtung-csp--token-storage) |
+| P1 | R14 | XSS-Härtung: CSP + Token-Storage | ✅ erledigt via [G10](#g10--xss-härtung-csp--token-storage) — CSP-Nonce für die Bundled-UI (v0.1.41) |
 | P2 | R15 | Login-Enumeration + Limiter-Keying (Konstante-Zeit + opt-in `(email,ip)`) | ✅ erledigt |
 | P2 | R16 | Proxy-/Client-IP (`trusted_proxy_count`) | ✅ erledigt |
 | P3 | R17 | Toten/redundanten Code aufräumen | ✅ erledigt (Provider-Doppel-Session-Merge als Folgeschritt offen) |

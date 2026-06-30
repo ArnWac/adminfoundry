@@ -86,6 +86,12 @@ class AdminRuntime:
     #: ``asterion.extensions.rate_limit_redis.RedisLoginRateLimiter``)
     #: satisfying :class:`asterion.auth.rate_limiter.RateLimiterBackend`.
     login_rate_limiter: Any = None
+    #: Password-reset request rate-limiter (separate counter from the login
+    #: limiter). ``create_admin`` builds an in-process default from
+    #: ``CoreAdminConfig.password_reset_rate_limit_*``; a multi-worker
+    #: deployment can replace it with a shared backend satisfying
+    #: :class:`asterion.auth.rate_limiter.RateLimiterBackend`.
+    password_reset_rate_limiter: Any = None
     #: Typed-notifier registry (Roadmap P4.5). Apps and extensions
     #: register implementations keyed by their Protocol type; publishers
     #: look them up with :meth:`NotifierRegistry.get` and treat ``None``

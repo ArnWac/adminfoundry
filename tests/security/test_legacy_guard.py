@@ -90,6 +90,7 @@ def test_package_tree_only_contains_v1_subpackages():
         "i18n",
         "models",
         "notifications",
+        "privacy",
         "providers",
         "registry",
         "root",

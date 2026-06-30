@@ -413,6 +413,28 @@ async def password_reset_request(
     runtime = request.app.state.asterion
     config = runtime.config
 
+    # Throttle reset requests per email (separate counter from login). The check
+    # runs BEFORE the user lookup and counts every request, so the 429 fires
+    # identically whether or not the account exists — no enumeration signal,
+    # while email-bombing / token-generation abuse is capped.
+    reset_limiter = getattr(runtime, "password_reset_rate_limiter", None)
+    if reset_limiter is not None:
+        limiter_key = payload.email.lower()
+        if await reset_limiter.is_limited(limiter_key):
+            await record_audit(
+                runtime.db,
+                action=PASSWORD_RESET_REQUEST,
+                changes={"email": payload.email, "issued": False, "reason": "rate_limited"},
+                **request_audit_kwargs(
+                    request, status_code=status.HTTP_429_TOO_MANY_REQUESTS
+                ),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many password reset requests. Please try again later.",
+            )
+        await reset_limiter.record_failure(limiter_key)
+
     user = (
         await session.execute(select(User).where(User.email == payload.email))
     ).scalar_one_or_none()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from jose import JWTError, jwt
@@ -123,6 +123,29 @@ def create_refresh_token(
     )
 
 
+def _decode_typed(
+    token: str,
+    *,
+    expected_type: str,
+    secret_key: str,
+    algorithm: str,
+    issuer: str | None = None,
+    audience: str | None = None,
+) -> dict[str, Any]:
+    """Decode a token and assert its ``type`` claim equals ``expected_type``.
+
+    Shared by the single-purpose decoders (refresh, MFA challenge) so a
+    token of one kind can't be replayed at the endpoint expecting another.
+    Raises :class:`TokenError` on a type mismatch.
+    """
+    payload = decode_token(
+        token, secret_key=secret_key, algorithm=algorithm, issuer=issuer, audience=audience
+    )
+    if payload.get("type") != expected_type:
+        raise TokenError("Invalid token type")
+    return payload
+
+
 def decode_refresh_token(
     token: str,
     *,
@@ -134,12 +157,14 @@ def decode_refresh_token(
     """Decode + type-check a refresh token. Raises :class:`TokenError`
     for any non-refresh token so an access token can't be replayed at
     the refresh endpoint."""
-    payload = decode_token(
-        token, secret_key=secret_key, algorithm=algorithm, issuer=issuer, audience=audience
+    return _decode_typed(
+        token,
+        expected_type=REFRESH_TOKEN_TYPE,
+        secret_key=secret_key,
+        algorithm=algorithm,
+        issuer=issuer,
+        audience=audience,
     )
-    if payload.get("type") != REFRESH_TOKEN_TYPE:
-        raise TokenError("Invalid token type")
-    return payload
 
 
 def is_refresh_token(payload: dict[str, Any]) -> bool:
@@ -190,12 +215,14 @@ def decode_mfa_challenge_token(
     """Decode + type-check an MFA challenge token. Raises :class:`TokenError`
     for any other token type so a stale access token can't be replayed
     at ``/auth/2fa/login``."""
-    payload = decode_token(
-        token, secret_key=secret_key, algorithm=algorithm, issuer=issuer, audience=audience
+    return _decode_typed(
+        token,
+        expected_type=MFA_CHALLENGE_TOKEN_TYPE,
+        secret_key=secret_key,
+        algorithm=algorithm,
+        issuer=issuer,
+        audience=audience,
     )
-    if payload.get("type") != MFA_CHALLENGE_TOKEN_TYPE:
-        raise TokenError("Invalid token type")
-    return payload
 
 
 def create_impersonation_token(
@@ -318,16 +345,43 @@ def decode_access_token(
     return payload
 
 
-def get_subject_user_id(payload: dict[str, Any]) -> UUID:
-    subject = payload.get("sub")
+def _uuid_claim(
+    payload: dict[str, Any],
+    key: str,
+    *,
+    required: bool,
+    missing_msg: str,
+    invalid_msg: str,
+) -> UUID | None:
+    """Pull a UUID-shaped claim out of ``payload``.
 
-    if not subject:
-        raise TokenError("Missing token subject")
-
+    Shared by the subject / impersonator / tenant accessors so the
+    "present? → parse → wrap failures as :class:`TokenError`" dance lives
+    in one place. ``required=True`` raises ``missing_msg`` when the claim
+    is absent/falsy; ``required=False`` returns ``None`` instead.
+    """
+    value = payload.get(key)
+    if not value:
+        if required:
+            raise TokenError(missing_msg)
+        return None
     try:
-        return UUID(str(subject))
+        return UUID(str(value))
     except ValueError as exc:
-        raise TokenError("Invalid token subject") from exc
+        raise TokenError(invalid_msg) from exc
+
+
+def get_subject_user_id(payload: dict[str, Any]) -> UUID:
+    return cast(
+        UUID,
+        _uuid_claim(
+            payload,
+            "sub",
+            required=True,
+            missing_msg="Missing token subject",
+            invalid_msg="Invalid token subject",
+        ),
+    )
 
 
 def get_token_version(payload: dict[str, Any]) -> int:
@@ -352,27 +406,23 @@ def get_token_jti(payload: dict[str, Any]) -> str:
 
 
 def get_impersonator_user_id(payload: dict[str, Any]) -> UUID | None:
-    value = payload.get("impersonated_by")
-
-    if not value:
-        return None
-
-    try:
-        return UUID(str(value))
-    except ValueError as exc:
-        raise TokenError("Invalid impersonator user id") from exc
+    return _uuid_claim(
+        payload,
+        "impersonated_by",
+        required=False,
+        missing_msg="Missing impersonator user id",
+        invalid_msg="Invalid impersonator user id",
+    )
 
 
 def get_impersonation_tenant_id(payload: dict[str, Any]) -> UUID | None:
-    value = payload.get("tenant_id")
-
-    if not value:
-        return None
-
-    try:
-        return UUID(str(value))
-    except ValueError as exc:
-        raise TokenError("Invalid impersonation tenant id") from exc
+    return _uuid_claim(
+        payload,
+        "tenant_id",
+        required=False,
+        missing_msg="Missing impersonation tenant id",
+        invalid_msg="Invalid impersonation tenant id",
+    )
 
 
 def is_impersonation_token(payload: dict[str, Any]) -> bool:

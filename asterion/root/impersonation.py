@@ -43,6 +43,9 @@ class ImpersonateRequest(BaseModel):
     target_user_id: uuid.UUID
     tenant_id: uuid.UUID | None = None
     duration_minutes: int | None = Field(default=None, ge=1, le=MAX_IMPERSONATION_MINUTES)
+    #: Documented purpose for the impersonation (G9). Required at the route
+    #: level when ``config.impersonation_require_reason`` is on; see the handler.
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class ImpersonateResponse(BaseModel):
@@ -142,13 +145,23 @@ async def impersonate(
             detail="Cannot impersonate yourself.",
         )
 
+    config = request.app.state.asterion.config
+    reason = (payload.reason or "").strip() or None
+    if getattr(config, "impersonation_require_reason", True) and reason is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "message": "A reason is required to impersonate a user.",
+                "fields": [{"name": "reason", "message": "This field is required."}],
+            },
+        )
+
     target = await _load_target(session, payload.target_user_id)
 
     effective_tenant_id, tenant_slug = await _resolve_target_tenant(
         session, target_id=target.id, requested=payload.tenant_id
     )
 
-    config = request.app.state.asterion.config
     duration = payload.duration_minutes or DEFAULT_IMPERSONATION_MINUTES
 
     token = create_impersonation_token(
@@ -181,6 +194,7 @@ async def impersonate(
             target_user_id=target.id,
             tenant_id=effective_tenant_id,
             jti=jti,
+            reason=reason,
         )
     )
     await session.flush()
@@ -198,6 +212,7 @@ async def impersonate(
                 "tenant_id": str(effective_tenant_id) if effective_tenant_id else None,
                 "duration_minutes": duration,
                 "jti": jti,
+                "reason": reason,
             },
             **request_audit_kwargs(request, status_code=200),
         )

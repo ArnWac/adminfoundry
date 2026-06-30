@@ -36,33 +36,67 @@ def primary_key_column(model: type[Any]):
     return primary_key[0]
 
 
-def coerce_primary_key_value(model: type[Any], value: str) -> Any:
-    pk_column = primary_key_column(model)
+def _coerce_str_to_column_type(
+    column,
+    raw_value: str,
+    *,
+    allow_bool: bool,
+    int_error: str,
+    uuid_error: str,
+) -> Any:
+    """Coerce a query-string scalar to ``column``'s python type.
 
+    Single source for the int/uuid/bool coercion shared by primary-key
+    lookup and filter values. ``int``/``uuid`` parse failures raise 422
+    with the caller-supplied message; ``bool`` is only honoured when
+    ``allow_bool`` (filters); a column whose python type is str/unknown
+    (or unresolvable) passes the raw value through unchanged.
+    """
     try:
-        python_type = pk_column.type.python_type
+        py_type = column.type.python_type
     except NotImplementedError:
-        python_type = str
+        return raw_value
 
-    if python_type is int:
+    if allow_bool and py_type is bool:
+        v = raw_value.strip().lower()
+        if v in {"true", "1", "yes", "on"}:
+            return True
+        if v in {"false", "0", "no", "off"}:
+            return False
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Filter value for {column.name!r} must be a boolean.",
+        )
+
+    if py_type is int:
         try:
-            return int(value)
+            return int(raw_value)
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="Invalid integer primary key.",
+                detail=int_error,
             ) from exc
 
-    if python_type is uuid.UUID:
+    if py_type is uuid.UUID:
         try:
-            return uuid.UUID(value)
+            return uuid.UUID(raw_value)
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="Invalid UUID primary key.",
+                detail=uuid_error,
             ) from exc
 
-    return value
+    return raw_value
+
+
+def coerce_primary_key_value(model: type[Any], value: str) -> Any:
+    return _coerce_str_to_column_type(
+        primary_key_column(model),
+        value,
+        allow_bool=False,
+        int_error="Invalid integer primary key.",
+        uuid_error="Invalid UUID primary key.",
+    )
 
 
 def model_column_names(model: type[Any]) -> set[str]:
@@ -185,41 +219,13 @@ def _coerce_filter_value(column, raw_value: str) -> Any:
     column python types pass through verbatim — the SQL layer will
     do whatever Postgres / SQLite would do for a bare string.
     """
-    try:
-        py_type = column.type.python_type
-    except NotImplementedError:
-        return raw_value
-
-    if py_type is bool:
-        v = raw_value.strip().lower()
-        if v in {"true", "1", "yes", "on"}:
-            return True
-        if v in {"false", "0", "no", "off"}:
-            return False
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"Filter value for {column.name!r} must be a boolean.",
-        )
-
-    if py_type is int:
-        try:
-            return int(raw_value)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Filter value for {column.name!r} must be an integer.",
-            ) from exc
-
-    if py_type is uuid.UUID:
-        try:
-            return uuid.UUID(raw_value)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Filter value for {column.name!r} must be a UUID.",
-            ) from exc
-
-    return raw_value
+    return _coerce_str_to_column_type(
+        column,
+        raw_value,
+        allow_bool=True,
+        int_error=f"Filter value for {column.name!r} must be an integer.",
+        uuid_error=f"Filter value for {column.name!r} must be a UUID.",
+    )
 
 
 def apply_filters(

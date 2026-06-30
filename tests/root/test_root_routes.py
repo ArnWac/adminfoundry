@@ -224,6 +224,79 @@ def test_user_detail_rejects_normal_user(app_state):
     assert resp.status_code == 403
 
 
+# --- data-subject rights (G8) ---
+
+
+def test_subject_export_rejects_normal_user(app_state):
+    app, state = app_state
+    uid = state["user"].id
+    resp = _client(app).get(
+        f"/api/v1/root/users/{uid}/export", headers=_bearer(_user_token(state))
+    )
+    assert resp.status_code == 403
+
+
+def test_subject_export_unknown_user_404(app_state):
+    app, state = app_state
+    resp = _client(app).get(
+        f"/api/v1/root/users/{uuid.uuid4()}/export",
+        headers=_bearer(_superadmin_token(state)),
+    )
+    assert resp.status_code == 404
+
+
+def test_subject_export_returns_bundle_and_logs_dsar(app_state):
+    app, state = app_state
+    uid = state["user"].id
+    resp = _client(app).get(
+        f"/api/v1/root/users/{uid}/export", headers=_bearer(_superadmin_token(state))
+    )
+    assert resp.status_code == 200, resp.text
+    bundle = resp.json()
+    assert bundle["subject"]["email"] == "alice@example.com"
+    assert "hashed_password" not in bundle["subject"]
+
+    # The export auto-logged a completed 'access' DSAR row.
+    dsar = _client(app).get(
+        f"/api/v1/root/users/{uid}/dsar", headers=_bearer(_superadmin_token(state))
+    ).json()
+    assert any(r["request_type"] == "access" and r["status"] == "completed" for r in dsar)
+
+
+def test_create_dsar_request(app_state):
+    app, state = app_state
+    uid = state["user"].id
+    resp = _client(app).post(
+        f"/api/v1/root/users/{uid}/dsar",
+        json={"request_type": "erasure", "note": "ticket-7"},
+        headers=_bearer(_superadmin_token(state)),
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["request_type"] == "erasure"
+
+
+def test_create_dsar_rejects_bad_type(app_state):
+    app, state = app_state
+    uid = state["user"].id
+    resp = _client(app).post(
+        f"/api/v1/root/users/{uid}/dsar",
+        json={"request_type": "bogus"},
+        headers=_bearer(_superadmin_token(state)),
+    )
+    # FastAPI rejects the Literal at validation time → 422.
+    assert resp.status_code == 422
+
+
+def test_create_dsar_unknown_user_404(app_state):
+    app, state = app_state
+    resp = _client(app).post(
+        f"/api/v1/root/users/{uuid.uuid4()}/dsar",
+        json={"request_type": "access"},
+        headers=_bearer(_superadmin_token(state)),
+    )
+    assert resp.status_code == 404
+
+
 # --- /tenants ---
 
 
@@ -347,6 +420,72 @@ def test_access_tenant_records_global_audit(app_state):
     assert rows[0].actor_label == "root@example.com"
 
 
+# --- POST /tenants/{id}/offboard (G6) ---
+
+
+def test_offboard_rejects_normal_user(app_state):
+    app, state = app_state
+    tenant = _first_tenant(app, state)
+    resp = _client(app).post(
+        f"/api/v1/root/tenants/{tenant['id']}/offboard",
+        json={"mode": "archive"},
+        headers=_bearer(_user_token(state)),
+    )
+    assert resp.status_code == 403
+
+
+def test_offboard_unknown_tenant_returns_404(app_state):
+    app, state = app_state
+    resp = _client(app).post(
+        f"/api/v1/root/tenants/{uuid.uuid4()}/offboard",
+        json={"mode": "archive"},
+        headers=_bearer(_superadmin_token(state)),
+    )
+    assert resp.status_code == 404
+
+
+def test_offboard_archive_marks_tenant_inactive(app_state):
+    app, state = app_state
+    tenant = _first_tenant(app, state)
+    resp = _client(app).post(
+        f"/api/v1/root/tenants/{tenant['id']}/offboard",
+        json={"mode": "archive"},
+        headers=_bearer(_superadmin_token(state)),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["mode"] == "archive"
+    assert body["schema_dropped"] is False  # SQLite
+    assert "memberships" in body["public_rows_deleted"]
+
+    # The tenant detail now reports it inactive (tombstone kept).
+    detail = _client(app).get(
+        f"/api/v1/root/tenants/{tenant['id']}",
+        headers=_bearer(_superadmin_token(state)),
+    )
+    assert detail.status_code == 200
+    assert detail.json()["is_active"] is False
+
+
+def test_offboard_drop_deletes_tenant(app_state):
+    app, state = app_state
+    tenant = _first_tenant(app, state)
+    resp = _client(app).post(
+        f"/api/v1/root/tenants/{tenant['id']}/offboard",
+        json={"mode": "drop"},
+        headers=_bearer(_superadmin_token(state)),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["mode"] == "drop"
+
+    # The tenant row is gone → detail 404s.
+    detail = _client(app).get(
+        f"/api/v1/root/tenants/{tenant['id']}",
+        headers=_bearer(_superadmin_token(state)),
+    )
+    assert detail.status_code == 404
+
+
 def test_access_tenant_requires_superadmin(app_state):
     app, state = app_state
     tenant = _first_tenant(app, state)
@@ -394,7 +533,7 @@ def test_impersonate_auto_enters_single_tenant(app_state):
     resp = _client(app).post(
         "/api/v1/root/impersonate",
         headers=_bearer(_superadmin_token(state)),
-        json={"target_user_id": str(state["user"].id)},
+        json={"target_user_id": str(state["user"].id), "reason": "tenant auto-enter test"},
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()

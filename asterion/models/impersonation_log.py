@@ -37,6 +37,15 @@ class ImpersonationLog(GlobalModel):
         index=True,
     )
 
+    #: Documented purpose for the impersonation (G9). Nullable at the column
+    #: level so historical rows and ``impersonation_require_reason=False``
+    #: deployments stay valid; the route enforces presence when the config
+    #: flag is on. Mirrored into the audit ``changes`` for the governance trail.
+    reason: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
