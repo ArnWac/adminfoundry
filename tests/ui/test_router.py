@@ -81,8 +81,11 @@ def test_dashboard_renders_shell(client):
     assert 'id="signout"' in body
     assert 'id="breadcrumb"' in body
     assert 'id="main-content"' in body
-    # The old topbar must not return.
-    assert 'class="topbar"' not in body
+    # Responsive shell (v0.1.49): the topbar is now a slim mobile-nav header
+    # hosting the hamburger toggle for the collapsible sidebar — not the old
+    # full navigation topbar the sidebar replaced.
+    assert 'id="nav-toggle"' in body
+    assert 'aria-controls="sidebar"' in body
 
 
 def test_settings_renders_shell(client):
